@@ -1,20 +1,42 @@
-outputs: "./outputs"
-dev: false
+# HF Downloader Configuration
 
-http:
-  host: '0.0.0.0'
-  port: 13000
-cluster:
-  scheduler_port: 8786
-  dashboard_address: ':8787'
-  n_workers: 2  # 启动的进程数
-  threads_per_worker: 1  # 每个进程的线程数
+# Application settings
+download_directory: ""
+max_retries: 5
+timeout_seconds: 3600
+concurrent_downloads: 1
+foreground: false
 
+# File paths
+database_path: ./hf_downloader.db
+pid_file: ./hf_downloader.pid
+models_file: ./config/models.json
+
+# Hugging Face settings
+# hf_token:  # Set via environment variable HF_TOKEN
+
+# Network settings
+chunk_size: 1048576  # 1MB
+user_agent: hf-downloader/1.0.0
+
+# Logging settings
 log:
-  path: './logs'
-  # 日志模块会为 filename 添加相应的后缀
-  filename: 'schedule-download-models'
-  level: 'info'
+  level: 'DEBUG'
+  file: './logs/hf_downloader.log'
+  max_size: 10485760  # 10MB
+  backup_count: 5
   rotation: '1 days'
   retention: '5 days'
   format: '<level>{level: <8}</level> <green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> - <blue>[{process.id}]</blue> - <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>'
+
+# Monitoring settings
+monitoring:
+  health_check_interval: 60  # Health check interval in seconds (default: 60 = 1 minute)
+  models_check_interval: 10  # Models file check interval in seconds (default: 60 = 1 minute)
+
+# Schedule settings (will be created if none exists)
+default_schedule:
+  enabled: true
+  type: daily
+  time: "16:30"
+  max_concurrent_downloads: 1

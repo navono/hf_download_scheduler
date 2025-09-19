@@ -1,7 +1,6 @@
 import logging
 import os.path
 import sys
-from datetime import datetime
 
 from loguru import logger
 
@@ -68,7 +67,10 @@ class ModuleFilter:
         module_path = record["name"]
 
         # Check if the module or any parent module should be excluded
-        return all(not (module_path == excluded or module_path.startswith(excluded + ".")) for excluded in self.excluded_modules)
+        return all(
+            not (module_path == excluded or module_path.startswith(excluded + "."))
+            for excluded in self.excluded_modules
+        )
 
 
 class MessageFilter:
@@ -115,12 +117,16 @@ class SourceFilter:
             # 获取记录中的模块名和函数名
             module = record.get("name", "")
             function = record.get("function", "")
-            
+
             # 检查是否匹配任何排除的模块-函数对
             for excluded_module, excluded_function in self.excluded_pairs:
-                if ((excluded_module == module or 
-                     (excluded_module == "src.g1_task.utils.custom_logging" and "custom_logging" in module)) and 
-                    excluded_function == function):
+                if (
+                    excluded_module == module
+                    or (
+                        excluded_module == "src.g1_task.utils.custom_logging"
+                        and "custom_logging" in module
+                    )
+                ) and excluded_function == function:
                     return False
             return True
         except Exception:
@@ -130,13 +136,13 @@ class SourceFilter:
 
 class CustomizeLogger:
     __mqtt_client = None
-    
+
     # 默认要排除的日志源 - 这是过滤第三方日志的主要方式
     __excluded_sources = [
         "logging:callHandlers",  # 排除 logging:callHandlers 函数的日志
         "src.g1_task.utils.custom_logging:handle",  # 排除 custom_logging:handle 函数的日志
     ]
-    
+
     # 以下过滤器作为备用，可以在需要时启用
     # 默认要排除的模块
     __excluded_modules = [
@@ -157,15 +163,12 @@ class CustomizeLogger:
 
     @classmethod
     def make_logger(cls, config):
-        filename = config["filename"]
-        file_path = config["path"]
-
-        # Use a consistent filename to allow proper rotation
-        formated_filename = f"{filename}.log"
+        # Use unified configuration
+        file_path = config["file"]
 
         abs_filepath = os.path.join(os.getcwd(), file_path)
         logger = cls.customize_logging(
-            filepath=os.path.join(abs_filepath, formated_filename),
+            filepath=abs_filepath,
             level=config["level"],
             retention=config["retention"],
             rotation=config["rotation"],
@@ -202,7 +205,7 @@ class CustomizeLogger:
     def get_excluded_loggers(cls) -> list:
         """Get the list of excluded logger names"""
         return cls.__excluded_loggers
-        
+
     @classmethod
     def set_excluded_functions(cls, functions: list):
         """Set function names to exclude from logging"""
@@ -214,7 +217,9 @@ class CustomizeLogger:
         return cls.__excluded_functions
 
     @classmethod
-    def customize_logging(cls, filepath: str, level: str, rotation: str, retention: str, format: str):
+    def customize_logging(
+        cls, filepath: str, level: str, rotation: str, retention: str, format: str
+    ):
         logger.remove()
 
         # Create filters
@@ -223,7 +228,7 @@ class CustomizeLogger:
         # 优先添加源过滤器，这是过滤第三方日志的主要方式
         if cls.__excluded_sources:
             filters.append(SourceFilter(cls.__excluded_sources))
-            
+
         # 如果需要其他过滤器，可以启用以下代码
         # Add module filter if excluded modules are specified
         if cls.__excluded_modules:
@@ -242,8 +247,24 @@ class CustomizeLogger:
             return all(f(record) for f in filters) if filters else True
 
         # Add handlers with the combined filter
-        logger.add(sys.stdout, enqueue=True, backtrace=True, level=level.upper(), format=format, filter=combined_filter if filters else None)
-        logger.add(filepath, rotation=rotation, retention=retention, enqueue=True, backtrace=True, level=level.upper(), format=format, filter=combined_filter if filters else None)
+        logger.add(
+            sys.stdout,
+            enqueue=True,
+            backtrace=True,
+            level=level.upper(),
+            format=format,
+            filter=combined_filter if filters else None,
+        )
+        logger.add(
+            filepath,
+            rotation=rotation,
+            retention=retention,
+            enqueue=True,
+            backtrace=True,
+            level=level.upper(),
+            format=format,
+            filter=combined_filter if filters else None,
+        )
         # logger.add(
         #     cls.__mqtt_sink,
         #     enqueue=True,

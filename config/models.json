@@ -1,0 +1,27 @@
+{
+  "models": [
+    {
+      "name": "Qwen/Qwen3-0.6B",
+      "description": "",
+      "size_estimate": "",
+      "priority": "high",
+      "tags": [
+        "",
+        ""
+      ],
+      "status": "completed",
+      "enabled": true
+    }
+  ],
+  "settings": {
+    "auto_cleanup": true,
+    "cleanup_age_days": 30,
+    "max_total_size": "500GB",
+    "check_frequency": "daily"
+  },
+  "metadata": {
+    "version": "1.0",
+    "created": "2025-01-01T00:00:00Z",
+    "last_updated": "2025-09-19T08:28:55.459800+00:00"
+  }
+}

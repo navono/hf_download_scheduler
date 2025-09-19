@@ -30,8 +30,12 @@ class DaskClientSingleton:
                 self.__class__._cluster = LocalCluster(
                     scheduler_port=config_data["cluster"]["scheduler_port"],
                     dashboard_address=config_data["cluster"]["dashboard_address"],
-                    n_workers=config_data["cluster"].get("n_workers", 4),  # 进程数，默认为4
-                    threads_per_worker=config_data["cluster"].get("threads_per_worker", 2),  # 每个进程的线程数，默认为2
+                    n_workers=config_data["cluster"].get(
+                        "n_workers", 4
+                    ),  # 进程数，默认为4
+                    threads_per_worker=config_data["cluster"].get(
+                        "threads_per_worker", 2
+                    ),  # 每个进程的线程数，默认为2
                     silence_logs=True,  # 减少日志输出
                 )
                 self.__class__._client = self.__class__._cluster.get_client()
@@ -43,8 +47,12 @@ class DaskClientSingleton:
                 # 注册信号处理函数，处理 Ctrl+C 中断
                 self._setup_signal_handlers()
 
-                dashboard_url = f"http://localhost{config_data['cluster']['dashboard_address']}"
-                logger.trace(f"Dask client and cluster initialized successfully, open {dashboard_url} to view dashboard")
+                dashboard_url = (
+                    f"http://localhost{config_data['cluster']['dashboard_address']}"
+                )
+                logger.trace(
+                    f"Dask client and cluster initialized successfully, open {dashboard_url} to view dashboard"
+                )
             except Exception as e:
                 logger.error(f"Error initializing Dask client: {e}", exc_info=True)
                 self._cleanup()
@@ -123,8 +131,12 @@ class DaskClientSingleton:
                 try:
                     # LocalCluster.close() is synchronous. Using a timeout.
                     # Running in a thread to avoid blocking the event loop.
-                    await asyncio.to_thread(cls._cluster.close, timeout=2)  # 缩短超时时间
-                    logger.trace("Dask local cluster close() method called successfully.")
+                    await asyncio.to_thread(
+                        cls._cluster.close, timeout=2
+                    )  # 缩短超时时间
+                    logger.trace(
+                        "Dask local cluster close() method called successfully."
+                    )
                 except Exception as e:
                     logger.debug(f"Exception during Dask local cluster.close(): {e}")
                 finally:
@@ -172,7 +184,7 @@ class MyWebSocketPlugin(WorkerPlugin):
     async def setup(self, worker):
         """在 Worker 启动时调用"""
         self.worker_name = worker.name
-        ws_url = f"{self.base_ws_url}worker_{self.worker_name}"
+        # ws_url = f"{self.base_ws_url}worker_{self.worker_name}"
         # self.ws_connection = WebSocketConnection(ws_url)
         await self.ws_connection.connect()
 

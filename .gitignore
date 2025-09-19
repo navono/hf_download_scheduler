@@ -170,3 +170,8 @@ runs
 *.exe
 
 .ruff_cache
+
+test_*
+hf_models
+hf_downloader.db
+*.pid

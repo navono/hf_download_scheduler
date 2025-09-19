@@ -41,7 +41,9 @@ class Config:
                 logger.debug(f"Config loaded: {self.__config}")
                 Config._initialized = True
             except Exception as e:
-                logger.error(f"Error loading config file '{config_file}': {e}", exc_info=True)
+                logger.error(
+                    f"Error loading config file '{config_file}': {e}", exc_info=True
+                )
                 raise
 
     def get_config(self):
