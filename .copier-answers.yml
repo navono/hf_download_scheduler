@@ -1,0 +1,46 @@
+# Copier answers file for the template project itself
+# This file contains the answers to the questions asked by the template
+# You can use this to reproduce the same project configuration
+
+# Project configuration
+project_name: py-project-template
+project_description: Add your description here
+author_name: ""
+author_email: ""
+python_version: "3.12"
+license: MIT
+
+# Feature flags
+use_prefect: true
+use_dask: true
+use_click: true
+use_pydub: true
+
+# Network configuration
+http_port: 13000
+dask_scheduler_port: 8786
+dask_dashboard_port: 8787
+
+# Prefect configuration
+prefect_server_url: ""
+prefect_api_url: ""
+prefect_work_pool: default-agent-pool
+
+# Dask configuration
+n_workers: 2
+threads_per_worker: 1
+
+# Logging configuration
+log_level: INFO
+log_rotation: "1 days"
+log_retention: "5 days"
+
+# Optional features
+include_tests: false
+include_docs: false
+include_docker: false
+include_github_actions: false
+
+# Template version
+_commit: v0.1.0
+_src_path: .
