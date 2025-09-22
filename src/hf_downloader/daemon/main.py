@@ -78,6 +78,9 @@ class Daemon:
             logger.info(f"Active schedule: {result['schedule']}")
             logger.info(f"Next run: {result.get('next_run', 'Not scheduled')}")
 
+            # Display pending models that will be downloaded on next run
+            self._display_pending_models()
+
             # Main daemon loop
             while self.running:
                 try:
@@ -142,6 +145,38 @@ class Daemon:
 
         except Exception as e:
             logger.error(f"Health check failed: {e}")
+
+    def _display_pending_models(self):
+        """Display the list of pending models that will be downloaded on next run."""
+        try:
+            # Get pending models from scheduler service
+            pending_models = self.scheduler_service.get_pending_models()
+
+            if not pending_models:
+                logger.info("No pending models to download on next run")
+                return
+
+            # Log the number of pending models
+            logger.info(
+                f"Found {len(pending_models)} pending models for next scheduled download:"
+            )
+
+            # Log each model with its details
+            for i, model in enumerate(pending_models, 1):
+                model_name = model.get("name", "Unknown")
+                model_priority = model.get("priority", "medium")
+                model_size = model.get("size_estimate", "Unknown size")
+
+                # Format the log message
+                if model_size and model_size != "":
+                    logger.info(
+                        f"  {i}. {model_name} (Priority: {model_priority}, Size: {model_size})"
+                    )
+                else:
+                    logger.info(f"  {i}. {model_name} (Priority: {model_priority})")
+
+        except Exception as e:
+            logger.error(f"Error displaying pending models: {e}")
 
 
 def main():

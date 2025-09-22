@@ -42,7 +42,9 @@ class DownloaderService:
         # Initialize ModelSyncService if models_file_path is provided
         self.model_sync_service = None
         if models_file_path:
-            self.model_sync_service = ModelSyncService(self.db_manager, models_file_path)
+            self.model_sync_service = ModelSyncService(
+                self.db_manager, models_file_path
+            )
 
         self._active_downloads: dict[str, threading.Thread] = {}
         self._progress_callbacks: dict[str, Callable] = {}
@@ -187,10 +189,16 @@ class DownloaderService:
             if self.model_sync_service:
                 try:
                     # 更新 models.json 中的模型状态
-                    self.model_sync_service.update_model_status_in_json(model_name, "completed")
-                    logger.info(f"Updated model status in JSON for {model_name}: completed")
+                    self.model_sync_service.update_model_status_in_json(
+                        model_name, "completed"
+                    )
+                    logger.info(
+                        f"Updated model status in JSON for {model_name}: completed"
+                    )
                 except Exception as json_error:
-                    logger.error(f"Error updating models.json for {model_name}: {json_error}")
+                    logger.error(
+                        f"Error updating models.json for {model_name}: {json_error}"
+                    )
 
             if progress_callback:
                 progress_callback(
@@ -218,10 +226,16 @@ class DownloaderService:
                 # 同步更新 models.json 文件
                 if self.model_sync_service:
                     try:
-                        self.model_sync_service.update_model_status_in_json(model_name, "paused")
-                        logger.info(f"Updated model status in JSON for {model_name}: paused (cancelled)")
+                        self.model_sync_service.update_model_status_in_json(
+                            model_name, "paused"
+                        )
+                        logger.info(
+                            f"Updated model status in JSON for {model_name}: paused (cancelled)"
+                        )
                     except Exception as json_error:
-                        logger.error(f"Error updating models.json for {model_name}: {json_error}")
+                        logger.error(
+                            f"Error updating models.json for {model_name}: {json_error}"
+                        )
             except Exception as db_error:
                 logger.error(f"Error updating database after cancellation: {db_error}")
 
@@ -243,10 +257,16 @@ class DownloaderService:
                 # 同步更新 models.json 文件
                 if self.model_sync_service:
                     try:
-                        self.model_sync_service.update_model_status_in_json(model_name, "failed")
-                        logger.info(f"Updated model status in JSON for {model_name}: failed")
+                        self.model_sync_service.update_model_status_in_json(
+                            model_name, "failed"
+                        )
+                        logger.info(
+                            f"Updated model status in JSON for {model_name}: failed"
+                        )
                     except Exception as json_error:
-                        logger.error(f"Error updating models.json for {model_name}: {json_error}")
+                        logger.error(
+                            f"Error updating models.json for {model_name}: {json_error}"
+                        )
             except Exception as db_error:
                 logger.error(f"Error updating database after failure: {db_error}")
 
@@ -470,10 +490,16 @@ class DownloaderService:
                 if self.model_sync_service:
                     try:
                         # 更新 models.json 中的模型状态
-                        self.model_sync_service.update_model_status_in_json(model_name, "paused")
-                        logger.info(f"Updated model status in JSON for {model_name}: paused")
+                        self.model_sync_service.update_model_status_in_json(
+                            model_name, "paused"
+                        )
+                        logger.info(
+                            f"Updated model status in JSON for {model_name}: paused"
+                        )
                     except Exception as json_error:
-                        logger.error(f"Error updating models.json for {model_name}: {json_error}")
+                        logger.error(
+                            f"Error updating models.json for {model_name}: {json_error}"
+                        )
 
             return {
                 "status": "cancelled",

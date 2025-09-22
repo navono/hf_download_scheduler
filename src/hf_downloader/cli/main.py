@@ -92,6 +92,18 @@ def start(ctx, foreground):
             pid_path=ctx.obj["pid_path"],
             log_level=ctx.obj["log_level"],
         )
+
+        # Display models that will be downloaded before starting daemon
+        if ctx.obj["output_format"] == "table":
+            models = integration_service.cli_integration.handle_model_list(
+                status_filter="pending"
+            )
+            if models["status"] == "success" and models["models"]:
+                click.echo(
+                    "\nPending models that will be downloaded on next scheduled run:"
+                )
+                _format_models_output(models["models"])
+
         success = daemon.start()
         if not success:
             click.echo("Failed to start daemon", err=True)

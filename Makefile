@@ -23,6 +23,23 @@ help:
 # Installation and setup
 install:
 	uv sync
+	$(MAKE) install-hooks
+
+# Application management
+cli:
+	uv run hf-downloader
+
+start:
+	uv run hf-downloader start
+
+foreground:
+	uv run hf-downloader start --foreground
+
+stop:
+	uv run hf-downloader stop
+
+status:
+	uv run hf-downloader status
 
 test:
 	uv run pytest -v
@@ -59,28 +76,19 @@ lint-fix:
 # Development workflow
 check: format-check lint type-check test-cov
 
+# Git hooks
+install-hooks:
+	mkdir -p .git/hooks
+	cp -f scripts/pre-commit .git/hooks/
+	chmod +x .git/hooks/pre-commit
+	@echo "Git pre-commit hook installed successfully."
+
 # Database management
 db-init:
 	uv run python -c "from src.hf_downloader.models.database import DatabaseManager; db = DatabaseManager('./hf_downloader.db'); print('Database initialized')"
 
 db-clean:
 	rm -f ./hf_downloader.db
-
-# Application management
-cli:
-	uv run hf-downloader
-
-start:
-	uv run hf-downloader start
-
-foreground:
-	uv run hf-downloader start --foreground
-
-stop:
-	uv run hf-downloader stop
-
-status:
-	uv run hf-downloader status
 
 # Build and distribution
 clean:

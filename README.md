@@ -23,11 +23,13 @@ A scheduled Hugging Face model downloader with background processing, configurat
    cd schedule-download-models
    ```
 
-2. **Install dependencies:**
+2. **Install dependencies and Git hooks:**
 
    ```bash
-   uv sync
+   make install
    ```
+   
+   This will install all dependencies and set up the Git pre-commit hook that ensures code quality before each commit.
 
 3. **Set up environment:**
    ```bash
@@ -346,7 +348,25 @@ uv run mypy .
 
 # Run all quality checks
 make check
+
+# Install Git pre-commit hook for automatic linting before commits
+make install-hooks
 ```
+
+### Git Pre-commit Hook
+
+This project includes a Git pre-commit hook that automatically runs `make lint-fix` before each commit to ensure code quality. If linting fails, the commit will be aborted.
+
+To install the pre-commit hook:
+
+```bash
+make install-hooks
+```
+
+The pre-commit hook will:
+1. Run `make lint-fix` to automatically fix linting issues when possible
+2. Abort the commit if any linting errors remain
+3. Allow the commit to proceed if all checks pass
 
 ### Development Commands
 

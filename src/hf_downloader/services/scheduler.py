@@ -52,7 +52,7 @@ class SchedulerService:
             if default_schedule and isinstance(default_schedule, dict):
                 schedule_type = default_schedule.get("type", "daily")
                 schedule_time = default_schedule.get("time", "22:00")
-                schedule_enabled = default_schedule.get("enabled", True)
+                # Note: enabled status is handled by database default value
                 max_concurrent = default_schedule.get(
                     "max_concurrent_downloads", self.config.concurrent_downloads
                 )
@@ -297,6 +297,13 @@ class SchedulerService:
                 logger.info("No pending models to download")
                 return
 
+            # Log the list of models that will be downloaded
+            logger.info(
+                f"Scheduled download will process the following {len(pending_models)} models:"
+            )
+            for i, model in enumerate(pending_models, 1):
+                logger.info(f"  {i}. {model.name}")
+
             # Get schedule configuration
             schedule_config = self.db_manager.get_active_schedule()
             if not schedule_config:
@@ -445,3 +452,39 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Error getting scheduler status: {e}")
             return {"state": "error", "error": str(e)}
+
+    def get_pending_models(self) -> list[dict[str, Any]]:
+        """Get list of pending models that will be downloaded on next run."""
+        try:
+            # Get models with pending status
+            pending_models = self.db_manager.get_models_by_status("pending")
+            logger.debug(f"Found {len(pending_models)} pending models")
+
+            # Convert to list of dictionaries for easier handling
+            result = []
+            for model in pending_models:
+                model_dict = {
+                    "id": model.id,
+                    "name": model.name,
+                    "status": model.status,
+                }
+
+                # Add metadata if available
+                if hasattr(model, "metadata") and model.metadata:
+                    if isinstance(model.metadata, dict):
+                        model_dict["priority"] = model.metadata.get(
+                            "priority", "medium"
+                        )
+                        model_dict["size_estimate"] = model.metadata.get(
+                            "size_estimate", ""
+                        )
+                        model_dict["description"] = model.metadata.get(
+                            "description", ""
+                        )
+
+                result.append(model_dict)
+
+            return result
+        except Exception as e:
+            logger.error(f"Error getting pending models: {e}")
+            return []

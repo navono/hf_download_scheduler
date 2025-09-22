@@ -7,11 +7,10 @@ for managing models, schedules, downloads, and configuration.
 
 import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from loguru import logger
-
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -38,11 +37,11 @@ class Model(Base):
     status = Column(String(20), nullable=False)
     size_bytes = Column(BigInteger, nullable=True)
     download_path = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     model_metadata = Column(Text, nullable=True)  # JSON stored as text
 
@@ -52,7 +51,7 @@ class Model(Base):
     def __repr__(self):
         return f"<Model(id={self.id}, name='{self.name}', status='{self.status}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert model to dictionary."""
         return {
             "id": self.id,
@@ -67,11 +66,11 @@ class Model(Base):
             else None,
         }
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """Get parsed metadata."""
         return json.loads(self.model_metadata) if self.model_metadata else {}
 
-    def set_metadata(self, metadata: Dict[str, Any]):
+    def set_metadata(self, metadata: dict[str, Any]):
         """Set metadata from dictionary."""
         self.model_metadata = json.dumps(metadata)
 
@@ -88,11 +87,11 @@ class ScheduleConfiguration(Base):
     day_of_week = Column(Integer, nullable=True)
     enabled = Column(Boolean, default=True)
     max_concurrent_downloads = Column(Integer, default=1)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     # Relationships
@@ -101,7 +100,7 @@ class ScheduleConfiguration(Base):
     def __repr__(self):
         return f"<ScheduleConfiguration(id={self.id}, name='{self.name}', type='{self.type}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert schedule to dictionary."""
         return {
             "id": self.id,
@@ -142,7 +141,7 @@ class DownloadSession(Base):
     def __repr__(self):
         return f"<DownloadSession(id={self.id}, status='{self.status}', model_id={self.model_id})>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert download session to dictionary."""
         return {
             "id": self.id,
@@ -162,11 +161,11 @@ class DownloadSession(Base):
             else None,
         }
 
-    def get_metadata(self) -> Dict[str, Any]:
+    def get_metadata(self) -> dict[str, Any]:
         """Get parsed metadata."""
         return json.loads(self.model_metadata) if self.model_metadata else {}
 
-    def set_metadata(self, metadata: Dict[str, Any]):
+    def set_metadata(self, metadata: dict[str, Any]):
         """Set metadata from dictionary."""
         self.model_metadata = json.dumps(metadata)
 
@@ -180,17 +179,17 @@ class SystemConfiguration(Base):
     key = Column(String(100), nullable=False, unique=True)
     value = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     def __repr__(self):
         return f"<SystemConfiguration(key='{self.key}', value='{self.value}')>"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert system configuration to dictionary."""
         return {
             "id": self.id,
@@ -229,8 +228,8 @@ class DatabaseManager:
     def create_model(
         self,
         name: str,
-        size_bytes: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        size_bytes: int | None = None,
+        metadata: dict[str, Any] | None = None,
         status: str = "pending",
     ) -> Model:
         """Create a new model record."""
@@ -248,19 +247,18 @@ class DatabaseManager:
             logger.info(f"Successfully created model with ID: {model.id}")
             return model
 
-    def get_model(self, model_id: int) -> Optional[Model]:
+    def get_model(self, model_id: int) -> Model | None:
         """Get model by ID."""
         with self.get_session() as session:
             return session.query(Model).filter(Model.id == model_id).first()
 
-    def get_model_by_name(self, name: str) -> Optional[Model]:
+    def get_model_by_name(self, name: str) -> Model | None:
         """Get model by name."""
         with self.get_session() as session:
             return session.query(Model).filter(Model.name == name).first()
 
-    
     def update_model_status(
-        self, model_id: int, status: str, download_path: Optional[str] = None
+        self, model_id: int, status: str, download_path: str | None = None
     ) -> bool:
         """Update model status and optionally download path."""
         logger.info(f"Updating model {model_id} status to: {status}")
@@ -281,7 +279,9 @@ class DatabaseManager:
 
             current_status = model.status
             if status not in valid_transitions.get(current_status, []):
-                logger.error(f"Invalid status transition from {current_status} to {status}")
+                logger.error(
+                    f"Invalid status transition from {current_status} to {status}"
+                )
                 raise ValueError(
                     f"Invalid status transition from {current_status} to {status}"
                 )
@@ -289,18 +289,18 @@ class DatabaseManager:
             model.status = status
             if download_path:
                 model.download_path = download_path
-            model.updated_at = datetime.now(timezone.utc)
+            model.updated_at = datetime.now(UTC)
 
             session.commit()
             logger.info(f"Successfully updated model {model_id} status to {status}")
             return True
 
-    def get_models_by_status(self, status: str) -> List[Model]:
+    def get_models_by_status(self, status: str) -> list[Model]:
         """Get all models with specified status."""
         with self.get_session() as session:
             return session.query(Model).filter(Model.status == status).all()
 
-    def get_all_models(self) -> List[Model]:
+    def get_all_models(self) -> list[Model]:
         """Get all models from database."""
         with self.get_session() as session:
             return session.query(Model).all()
@@ -311,7 +311,7 @@ class DatabaseManager:
         name: str,
         type: str,
         time: str,
-        day_of_week: Optional[int] = None,
+        day_of_week: int | None = None,
         max_concurrent_downloads: int = 1,
     ) -> ScheduleConfiguration:
         """Create a new schedule configuration."""
@@ -328,12 +328,12 @@ class DatabaseManager:
             session.refresh(schedule)
             return schedule
 
-    def get_active_schedule(self) -> Optional[ScheduleConfiguration]:
+    def get_active_schedule(self) -> ScheduleConfiguration | None:
         """Get the currently enabled schedule."""
         with self.get_session() as session:
             return (
                 session.query(ScheduleConfiguration)
-                .filter(ScheduleConfiguration.enabled == True)
+                .filter(ScheduleConfiguration.enabled)
                 .first()
             )
 
@@ -371,26 +371,34 @@ class DatabaseManager:
                 return True
             return False
 
-    def get_all_schedules(self) -> List[ScheduleConfiguration]:
+    def get_all_schedules(self) -> list[ScheduleConfiguration]:
         """Get all schedule configurations."""
         with self.get_session() as session:
-            return session.query(ScheduleConfiguration).order_by(ScheduleConfiguration.created_at.desc()).all()
+            return (
+                session.query(ScheduleConfiguration)
+                .order_by(ScheduleConfiguration.created_at.desc())
+                .all()
+            )
 
-    def get_schedule(self, schedule_id: int) -> Optional[ScheduleConfiguration]:
+    def get_schedule(self, schedule_id: int) -> ScheduleConfiguration | None:
         """Get schedule by ID."""
         with self.get_session() as session:
-            return session.query(ScheduleConfiguration).filter(ScheduleConfiguration.id == schedule_id).first()
+            return (
+                session.query(ScheduleConfiguration)
+                .filter(ScheduleConfiguration.id == schedule_id)
+                .first()
+            )
 
     def update_schedule(
         self,
         schedule_id: int,
-        name: Optional[str] = None,
-        type: Optional[str] = None,
-        time: Optional[str] = None,
-        day_of_week: Optional[int] = None,
-        max_concurrent_downloads: Optional[int] = None,
-        enabled: Optional[bool] = None,
-    ) -> Optional[ScheduleConfiguration]:
+        name: str | None = None,
+        type: str | None = None,
+        time: str | None = None,
+        day_of_week: int | None = None,
+        max_concurrent_downloads: int | None = None,
+        enabled: bool | None = None,
+    ) -> ScheduleConfiguration | None:
         """Update schedule configuration."""
         with self.get_session() as session:
             schedule = (
@@ -414,7 +422,7 @@ class DatabaseManager:
             if enabled is not None:
                 schedule.enabled = enabled
 
-            schedule.updated_at = datetime.now(timezone.utc)
+            schedule.updated_at = datetime.now(UTC)
             session.commit()
             session.refresh(schedule)
             return schedule
@@ -446,17 +454,23 @@ class DatabaseManager:
             session.commit()
             return True
 
-    def get_enabled_schedules(self) -> List[ScheduleConfiguration]:
+    def get_enabled_schedules(self) -> list[ScheduleConfiguration]:
         """Get all enabled schedules."""
         with self.get_session() as session:
-            return session.query(ScheduleConfiguration).filter(ScheduleConfiguration.enabled == True).all()
+            return (
+                session.query(ScheduleConfiguration)
+                .filter(ScheduleConfiguration.enabled)
+                .all()
+            )
 
     # Download session operations
     def create_download_session(
-        self, model_id: int, schedule_id: Optional[int] = None
+        self, model_id: int, schedule_id: int | None = None
     ) -> DownloadSession:
         """Create a new download session."""
-        logger.info(f"Creating download session for model {model_id}, schedule {schedule_id}")
+        logger.info(
+            f"Creating download session for model {model_id}, schedule {schedule_id}"
+        )
         with self.get_session() as session:
             session_obj = DownloadSession(
                 model_id=model_id, schedule_id=schedule_id, status="started"
@@ -471,9 +485,9 @@ class DatabaseManager:
         self,
         session_id: int,
         status: str,
-        bytes_downloaded: Optional[int] = None,
-        total_bytes: Optional[int] = None,
-        error_message: Optional[str] = None,
+        bytes_downloaded: int | None = None,
+        total_bytes: int | None = None,
+        error_message: str | None = None,
     ) -> bool:
         """Update download session progress."""
         logger.info(f"Updating download session {session_id} to status: {status}")
@@ -497,14 +511,14 @@ class DatabaseManager:
                 logger.error(f"Session {session_id} error: {error_message}")
 
             if status in ["completed", "failed", "cancelled"]:
-                download_session.completed_at = datetime.now(timezone.utc)
+                download_session.completed_at = datetime.now(UTC)
 
             session.commit()
             return True
 
     def get_download_history(
         self, model_id: int, limit: int = 10
-    ) -> List[DownloadSession]:
+    ) -> list[DownloadSession]:
         """Get download history for a model."""
         with self.get_session() as session:
             return (
@@ -515,7 +529,7 @@ class DatabaseManager:
                 .all()
             )
 
-    def get_download_session(self, session_id: int) -> Optional[DownloadSession]:
+    def get_download_session(self, session_id: int) -> DownloadSession | None:
         """Get a specific download session by ID."""
         with self.get_session() as session:
             return (
@@ -524,16 +538,18 @@ class DatabaseManager:
                 .first()
             )
 
-    def get_active_download_sessions(self) -> List[DownloadSession]:
+    def get_active_download_sessions(self) -> list[DownloadSession]:
         """Get all currently active download sessions."""
         with self.get_session() as session:
             return (
                 session.query(DownloadSession)
-                .filter(DownloadSession.status.in_(["started", "in_progress", "paused"]))
+                .filter(
+                    DownloadSession.status.in_(["started", "in_progress", "paused"])
+                )
                 .all()
             )
 
-    def get_sessions_by_status(self, status: str) -> List[DownloadSession]:
+    def get_sessions_by_status(self, status: str) -> list[DownloadSession]:
         """Get download sessions by status."""
         with self.get_session() as session:
             return (
@@ -543,7 +559,7 @@ class DatabaseManager:
                 .all()
             )
 
-    def get_sessions_by_schedule(self, schedule_id: int) -> List[DownloadSession]:
+    def get_sessions_by_schedule(self, schedule_id: int) -> list[DownloadSession]:
         """Get all download sessions for a specific schedule."""
         with self.get_session() as session:
             return (
@@ -553,9 +569,12 @@ class DatabaseManager:
                 .all()
             )
 
-    def get_session_statistics(self, model_id: Optional[int] = None,
-                             schedule_id: Optional[int] = None,
-                             time_range_days: Optional[int] = None) -> Dict[str, Any]:
+    def get_session_statistics(
+        self,
+        model_id: int | None = None,
+        schedule_id: int | None = None,
+        time_range_days: int | None = None,
+    ) -> dict[str, Any]:
         """Get download session statistics."""
         with self.get_session() as session:
             query = session.query(DownloadSession)
@@ -566,7 +585,7 @@ class DatabaseManager:
             if schedule_id:
                 query = query.filter(DownloadSession.schedule_id == schedule_id)
             if time_range_days:
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=time_range_days)
+                cutoff_date = datetime.now(UTC) - timedelta(days=time_range_days)
                 query = query.filter(DownloadSession.started_at >= cutoff_date)
 
             sessions = query.all()
@@ -576,16 +595,28 @@ class DatabaseManager:
             completed_sessions = len([s for s in sessions if s.status == "completed"])
             failed_sessions = len([s for s in sessions if s.status == "failed"])
             cancelled_sessions = len([s for s in sessions if s.status == "cancelled"])
-            active_sessions = len([s for s in sessions if s.status in ["started", "in_progress", "paused"]])
+            active_sessions = len(
+                [
+                    s
+                    for s in sessions
+                    if s.status in ["started", "in_progress", "paused"]
+                ]
+            )
 
             # Calculate total bytes
-            total_downloaded = sum(s.bytes_downloaded for s in sessions if s.bytes_downloaded)
+            total_downloaded = sum(
+                s.bytes_downloaded for s in sessions if s.bytes_downloaded
+            )
             total_size = sum(s.total_bytes for s in sessions if s.total_bytes)
 
             # Calculate average download speed for completed sessions
             completed_with_time = [
-                s for s in sessions
-                if s.status == "completed" and s.started_at and s.completed_at and s.bytes_downloaded > 0
+                s
+                for s in sessions
+                if s.status == "completed"
+                and s.started_at
+                and s.completed_at
+                and s.bytes_downloaded > 0
             ]
 
             avg_speed = 0
@@ -600,7 +631,9 @@ class DatabaseManager:
                     avg_speed = sum(speeds) / len(speeds)
 
             # Calculate success rate
-            success_rate = (completed_sessions / total_sessions * 100) if total_sessions > 0 else 0
+            success_rate = (
+                (completed_sessions / total_sessions * 100) if total_sessions > 0 else 0
+            )
 
             return {
                 "total_sessions": total_sessions,
@@ -611,22 +644,28 @@ class DatabaseManager:
                 "success_rate": round(success_rate, 2),
                 "total_bytes_downloaded": total_downloaded,
                 "total_bytes_requested": total_size,
-                "completion_rate": round((total_downloaded / total_size * 100), 2) if total_size > 0 else 0,
+                "completion_rate": round((total_downloaded / total_size * 100), 2)
+                if total_size > 0
+                else 0,
                 "average_download_speed_bps": round(avg_speed, 2),
-                "average_download_speed_mbps": round(avg_speed / (1024 * 1024), 2) if avg_speed > 0 else 0
+                "average_download_speed_mbps": round(avg_speed / (1024 * 1024), 2)
+                if avg_speed > 0
+                else 0,
             }
 
-    def cleanup_old_sessions(self, days_to_keep: int = 30) -> Dict[str, Any]:
+    def cleanup_old_sessions(self, days_to_keep: int = 30) -> dict[str, Any]:
         """Clean up old download sessions."""
         try:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days_to_keep)
 
             with self.get_session() as session:
                 # Count sessions to be deleted
                 old_sessions = (
                     session.query(DownloadSession)
                     .filter(DownloadSession.started_at < cutoff_date)
-                    .filter(DownloadSession.status.in_(["completed", "failed", "cancelled"]))
+                    .filter(
+                        DownloadSession.status.in_(["completed", "failed", "cancelled"])
+                    )
                     .all()
                 )
 
@@ -644,18 +683,16 @@ class DatabaseManager:
                     "status": "success",
                     "deleted_count": deleted_count,
                     "cutoff_date": cutoff_date.isoformat(),
-                    "days_kept": days_to_keep
+                    "days_kept": days_to_keep,
                 }
 
         except Exception as e:
             self.logger.error(f"Error cleaning up old sessions: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "deleted_count": 0
-            }
+            return {"status": "error", "error": str(e), "deleted_count": 0}
 
-    def retry_failed_session(self, session_id: int, new_schedule_id: Optional[int] = None) -> Optional[DownloadSession]:
+    def retry_failed_session(
+        self, session_id: int, new_schedule_id: int | None = None
+    ) -> DownloadSession | None:
         """Create a new session to retry a failed download."""
         try:
             with self.get_session() as session:
@@ -675,7 +712,7 @@ class DatabaseManager:
                     schedule_id=new_schedule_id or failed_session.schedule_id,
                     status="started",
                     retry_count=failed_session.retry_count + 1,
-                    total_bytes=failed_session.total_bytes
+                    total_bytes=failed_session.total_bytes,
                 )
 
                 # Copy metadata if it exists
@@ -686,7 +723,9 @@ class DatabaseManager:
                 session.commit()
                 session.refresh(new_session)
 
-                self.logger.info(f"Created retry session {new_session.id} for failed session {session_id}")
+                self.logger.info(
+                    f"Created retry session {new_session.id} for failed session {session_id}"
+                )
 
                 return new_session
 
@@ -695,9 +734,7 @@ class DatabaseManager:
             return None
 
     # System configuration operations
-    def get_system_config(
-        self, key: str, default: Optional[str] = None
-    ) -> Optional[str]:
+    def get_system_config(self, key: str, default: str | None = None) -> str | None:
         """Get system configuration value."""
         with self.get_session() as session:
             config = (
@@ -708,7 +745,7 @@ class DatabaseManager:
             return config.value if config else default
 
     def set_system_config(
-        self, key: str, value: str, description: Optional[str] = None
+        self, key: str, value: str, description: str | None = None
     ) -> bool:
         """Set system configuration value."""
         with self.get_session() as session:
@@ -719,7 +756,7 @@ class DatabaseManager:
             )
             if config:
                 config.value = value
-                config.updated_at = datetime.now(timezone.utc)
+                config.updated_at = datetime.now(UTC)
             else:
                 config = SystemConfiguration(
                     key=key, value=value, description=description
@@ -740,7 +777,7 @@ class DatabaseManager:
         for key, value, description in defaults:
             self.set_system_config(key, value, description)
 
-    def get_database_stats(self) -> Dict[str, Any]:
+    def get_database_stats(self) -> dict[str, Any]:
         """Get database statistics."""
         try:
             with self.get_session() as session:
