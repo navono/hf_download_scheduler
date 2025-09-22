@@ -295,6 +295,45 @@ class DatabaseManager:
             logger.info(f"Successfully updated model {model_id} status to {status}")
             return True
 
+    def update_model(
+        self, model_id: int, status: str | None = None, metadata: dict | None = None
+    ) -> bool:
+        """Update model status and metadata."""
+        logger.info(
+            f"Updating model {model_id} with status: {status}, metadata: {metadata}"
+        )
+        with self.get_session() as session:
+            model = session.query(Model).filter(Model.id == model_id).first()
+            if not model:
+                logger.warning(f"Model with ID {model_id} not found")
+                return False
+
+            # Update status if provided
+            if status is not None:
+                # For model_sync.py, we allow direct status updates without transition validation
+                # This is needed for synchronization between JSON and database
+                model.status = status
+                logger.info(f"Updated model {model_id} status to {status}")
+
+            # Update metadata if provided
+            if metadata is not None and isinstance(metadata, dict):
+                # Get current metadata
+                current_metadata = model.get_metadata()
+
+                # Update metadata fields
+                for key, value in metadata.items():
+                    current_metadata[key] = value
+
+                # Save updated metadata
+                model.set_metadata(current_metadata)
+
+                logger.info(f"Updated model {model_id} metadata")
+
+            model.updated_at = datetime.now(UTC)
+            session.commit()
+            logger.info(f"Successfully updated model {model_id}")
+            return True
+
     def get_models_by_status(self, status: str) -> list[Model]:
         """Get all models with specified status."""
         with self.get_session() as session:

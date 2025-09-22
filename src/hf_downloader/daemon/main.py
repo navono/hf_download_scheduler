@@ -217,6 +217,9 @@ def main():
     if not success:
         sys.exit(1)
 
+    # In background mode, we should never reach here because daemon.start()
+    # contains an infinite loop. If we do reach here, it means the daemon
+    # exited unexpectedly.
     sys.exit(0)
 
 
