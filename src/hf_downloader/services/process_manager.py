@@ -41,6 +41,30 @@ class ProcessManager:
         self._daemon_process: subprocess.Popen | None = None
         self._shutdown_event = threading.Event()
 
+        # 守护进程监控相关
+        self._watchdog_thread: threading.Thread | None = None
+        self._watchdog_enabled = False
+        self._watchdog_interval = 60  # 默认每60秒检查一次
+        self._auto_restart = True  # 默认启用自动重启
+        self._max_restart_attempts = 3  # 默认最大重启尝试次数
+        self._restart_attempts = 0  # 当前重启尝试次数
+        self._last_restart_time = 0  # 上次重启时间戳
+
+        # 系统资源监控相关
+        self._resource_monitor_thread: threading.Thread | None = None
+        self._resource_monitor_enabled = False
+        self._resource_monitor_interval = 60  # 默认每60秒检查一次
+        self._memory_threshold = 90  # 内存使用率阈值（百分比）
+        self._cpu_threshold = 95  # CPU使用率阈值（百分比）
+        self._system_resources = {}
+        self._resource_warnings = 0  # 资源警告计数
+
+        # 健康状态报告相关
+        self._health_report_thread: threading.Thread | None = None
+        self._health_report_enabled = False
+        self._health_report_interval = 3600  # 默认每小时生成一次报告
+        self._last_health_report_time = 0  # 上次生成报告的时间戳
+
     def start_daemon(self) -> dict[str, Any]:
         """Start the downloader daemon."""
         try:
@@ -60,6 +84,9 @@ class ProcessManager:
                 self._write_pid_file(result["pid"])
                 logger.info(f"Daemon started with PID {result['pid']}")
 
+                # 启动守护进程监控
+                self._start_watchdog()
+
             return result
 
         except Exception as e:
@@ -69,6 +96,9 @@ class ProcessManager:
     def stop_daemon(self) -> dict[str, Any]:
         """Stop the downloader daemon."""
         try:
+            # 停止守护进程监控
+            self._stop_watchdog()
+
             if not self._is_daemon_running():
                 return {"status": "not_running", "message": "Daemon is not running"}
 
@@ -152,16 +182,17 @@ class ProcessManager:
     def _start_daemon_process(self) -> dict[str, Any]:
         """Start the daemon process."""
         try:
-            # Get current Python executable and script path
+            # Get current Python executable
             python_executable = sys.executable
 
-            # Path to the daemon script
-            daemon_script = Path(__file__).parent.parent / "daemon" / "main.py"
+            # Use Python module path instead of script path
+            # This ensures relative imports work correctly
 
             # Prepare daemon command
             daemon_command = [
                 python_executable,
-                str(daemon_script),
+                "-m",
+                "hf_downloader.daemon.main",  # Use module path
                 "--config",
                 str(self.config_path),
                 "--database",
@@ -207,9 +238,19 @@ class ProcessManager:
                 }
             else:
                 # Process exited immediately
+                # Capture output to understand why it exited
+                stdout, stderr = self._daemon_process.communicate()
+                error_output = (
+                    stderr.decode("utf-8", errors="replace") if stderr else ""
+                )
+                logger.error(
+                    f"Daemon process exited immediately with error: {error_output}"
+                )
+
                 return {
                     "status": "failed",
                     "error": "Daemon process exited immediately",
+                    "stderr": error_output,
                 }
 
         except Exception as e:
@@ -482,3 +523,414 @@ class ProcessManager:
         except Exception as e:
             logger.error(f"Error validating daemon health: {e}")
             return {"status": "error", "error": str(e)}
+
+    def _start_watchdog(self):
+        """启动守护进程监控线程"""
+        if hasattr(self.config, "monitoring") and isinstance(
+            self.config.monitoring, dict
+        ):
+            self._watchdog_enabled = self.config.monitoring.get(
+                "watchdog_enabled", True
+            )
+            self._watchdog_interval = self.config.monitoring.get(
+                "watchdog_interval", 60
+            )
+            self._auto_restart = self.config.monitoring.get("auto_restart", True)
+            self._max_restart_attempts = self.config.monitoring.get(
+                "max_restart_attempts", 3
+            )
+
+            # 资源监控相关配置
+            self._resource_monitor_enabled = self.config.monitoring.get(
+                "resource_monitor_enabled", True
+            )
+            self._resource_monitor_interval = self.config.monitoring.get(
+                "resource_monitor_interval", 60
+            )
+            self._memory_threshold = self.config.monitoring.get("memory_threshold", 90)
+            self._cpu_threshold = self.config.monitoring.get("cpu_threshold", 95)
+
+            # 健康状态报告相关配置
+            self._health_report_enabled = self.config.monitoring.get(
+                "health_report_enabled", True
+            )
+            self._health_report_interval = self.config.monitoring.get(
+                "health_report_interval", 3600
+            )
+
+        if not self._watchdog_enabled:
+            logger.info("Watchdog is disabled in configuration")
+            return
+
+        # 停止已有的监控线程
+        self._stop_watchdog()
+
+        # 创建新的监控线程
+        self._restart_attempts = 0
+        self._shutdown_event.clear()
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop, daemon=True, name="DaemonWatchdog"
+        )
+        self._watchdog_thread.start()
+        logger.info(
+            f"Daemon watchdog started with interval {self._watchdog_interval} seconds"
+        )
+
+        # 启动资源监控线程
+        if self._resource_monitor_enabled:
+            self._start_resource_monitor()
+
+        # 启动健康状态报告线程
+        if self._health_report_enabled:
+            self._start_health_report()
+
+    def _stop_watchdog(self):
+        """停止守护进程监控线程"""
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            self._shutdown_event.set()
+            self._watchdog_thread.join(timeout=5)
+            logger.info("Daemon watchdog stopped")
+
+        # 同时停止资源监控线程
+        self._stop_resource_monitor()
+
+    def _watchdog_loop(self):
+        """守护进程监控循环"""
+        logger.info("Watchdog monitoring loop started")
+
+        while not self._shutdown_event.is_set():
+            try:
+                # 检查守护进程是否运行
+                health_status = self.validate_daemon_health()
+
+                if health_status["status"] == "unhealthy":
+                    logger.warning(f"Daemon is unhealthy: {health_status['reason']}")
+
+                    # 如果配置了自动重启且未超过最大重启次数
+                    if (
+                        self._auto_restart
+                        and self._restart_attempts < self._max_restart_attempts
+                    ):
+                        # 检查上次重启时间，避免频繁重启
+                        current_time = time.time()
+                        if (
+                            current_time - self._last_restart_time > 300
+                        ):  # 至少间隔5分钟
+                            self._restart_attempts += 1
+                            self._last_restart_time = current_time
+
+                            logger.warning(
+                                f"Attempting to restart daemon (attempt {self._restart_attempts}/{self._max_restart_attempts})"
+                            )
+
+                            # 清理可能存在的僵尸进程
+                            self.cleanup_stale_pids()
+
+                            # 重启守护进程
+                            restart_result = self._start_daemon_process()
+                            if restart_result["status"] == "started":
+                                self._write_pid_file(restart_result["pid"])
+                                logger.info(
+                                    f"Daemon restarted successfully with PID {restart_result['pid']}"
+                                )
+                            else:
+                                logger.error(
+                                    f"Failed to restart daemon: {restart_result}"
+                                )
+                    elif self._restart_attempts >= self._max_restart_attempts:
+                        logger.error(
+                            f"Maximum restart attempts ({self._max_restart_attempts}) reached. "
+                            "Manual intervention required."
+                        )
+                elif health_status["status"] == "warning":
+                    logger.warning(f"Daemon health warning: {health_status['reason']}")
+                else:
+                    # 如果守护进程健康，重置重启计数
+                    if self._restart_attempts > 0:
+                        logger.info(
+                            "Daemon is healthy again, resetting restart attempts counter"
+                        )
+                        self._restart_attempts = 0
+
+            except Exception as e:
+                logger.error(f"Error in watchdog loop: {e}")
+
+            # 等待下一次检查
+            self._shutdown_event.wait(self._watchdog_interval)
+
+        logger.info("Watchdog monitoring loop stopped")
+
+    def _start_resource_monitor(self):
+        """启动系统资源监控线程"""
+        # 停止已有的资源监控线程
+        self._stop_resource_monitor()
+
+        # 创建新的资源监控线程
+        self._resource_warnings = 0
+        self._resource_monitor_thread = threading.Thread(
+            target=self._resource_monitor_loop, daemon=True, name="ResourceMonitor"
+        )
+        self._resource_monitor_thread.start()
+        logger.info(
+            f"Resource monitor started with interval {self._resource_monitor_interval} seconds"
+        )
+
+    def _stop_resource_monitor(self):
+        """停止系统资源监控线程"""
+        if self._resource_monitor_thread and self._resource_monitor_thread.is_alive():
+            self._shutdown_event.set()
+            self._resource_monitor_thread.join(timeout=5)
+            logger.info("Resource monitor stopped")
+
+        # 同时停止健康状态报告线程
+        self._stop_health_report()
+
+    def _resource_monitor_loop(self):
+        """系统资源监控循环"""
+        logger.info("Resource monitoring loop started")
+
+        while not self._shutdown_event.is_set():
+            try:
+                # 获取系统资源使用情况
+                system_resources = self._get_system_resources()
+                self._system_resources = system_resources
+
+                # 检查内存使用率
+                memory_percent = system_resources.get("memory_percent", 0)
+                if memory_percent > self._memory_threshold:
+                    self._resource_warnings += 1
+                    logger.warning(
+                        f"System memory usage ({memory_percent:.1f}%) exceeds threshold ({self._memory_threshold}%)"
+                    )
+
+                    # 如果守护进程正在运行，尝试释放内存
+                    pid = self._get_current_pid()
+                    if pid:
+                        self._optimize_daemon_memory(pid)
+
+                # 检查CPU使用率
+                cpu_percent = system_resources.get("cpu_percent", 0)
+                if cpu_percent > self._cpu_threshold:
+                    self._resource_warnings += 1
+                    logger.warning(
+                        f"System CPU usage ({cpu_percent:.1f}%) exceeds threshold ({self._cpu_threshold}%)"
+                    )
+
+                    # 如果守护进程正在运行，尝试降低 CPU 使用率
+                    pid = self._get_current_pid()
+                    if pid:
+                        self._optimize_daemon_cpu(pid)
+
+                # 如果资源正常，重置警告计数
+                if (
+                    memory_percent < self._memory_threshold
+                    and cpu_percent < self._cpu_threshold
+                ):
+                    if self._resource_warnings > 0:
+                        logger.info("System resources back to normal levels")
+                        self._resource_warnings = 0
+
+            except Exception as e:
+                logger.error(f"Error in resource monitor loop: {e}")
+
+            # 等待下一次检查
+            self._shutdown_event.wait(self._resource_monitor_interval)
+
+        logger.info("Resource monitoring loop stopped")
+
+    def _get_system_resources(self) -> dict[str, Any]:
+        """获取系统资源使用情况"""
+        try:
+            # 获取系统内存使用情况
+            virtual_memory = psutil.virtual_memory()
+            swap_memory = psutil.swap_memory()
+
+            # 获取CPU使用情况
+            cpu_percent = psutil.cpu_percent(interval=1)
+            cpu_count = psutil.cpu_count()
+
+            # 获取磁盘使用情况
+            disk_usage = psutil.disk_usage("/")
+
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "memory": {
+                    "total": virtual_memory.total,
+                    "available": virtual_memory.available,
+                    "used": virtual_memory.used,
+                    "free": virtual_memory.free,
+                    "percent": virtual_memory.percent,
+                    "total_formatted": self._format_bytes(virtual_memory.total),
+                    "available_formatted": self._format_bytes(virtual_memory.available),
+                    "used_formatted": self._format_bytes(virtual_memory.used),
+                    "free_formatted": self._format_bytes(virtual_memory.free),
+                },
+                "swap": {
+                    "total": swap_memory.total,
+                    "used": swap_memory.used,
+                    "free": swap_memory.free,
+                    "percent": swap_memory.percent,
+                    "total_formatted": self._format_bytes(swap_memory.total),
+                    "used_formatted": self._format_bytes(swap_memory.used),
+                    "free_formatted": self._format_bytes(swap_memory.free),
+                },
+                "cpu": {
+                    "percent": cpu_percent,
+                    "count": cpu_count,
+                },
+                "disk": {
+                    "total": disk_usage.total,
+                    "used": disk_usage.used,
+                    "free": disk_usage.free,
+                    "percent": disk_usage.percent,
+                    "total_formatted": self._format_bytes(disk_usage.total),
+                    "used_formatted": self._format_bytes(disk_usage.used),
+                    "free_formatted": self._format_bytes(disk_usage.free),
+                },
+                "memory_percent": virtual_memory.percent,
+                "cpu_percent": cpu_percent,
+                "disk_percent": disk_usage.percent,
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting system resources: {e}")
+            return {}
+
+    def _optimize_daemon_memory(self, pid: int):
+        """尝试优化守护进程的内存使用"""
+        try:
+            process = psutil.Process(pid)
+            process_memory = process.memory_info()
+
+            logger.warning(
+                f"Daemon process (PID {pid}) memory usage: {self._format_bytes(process_memory.rss)}"
+            )
+
+            # 记录内存使用情况
+            self.db_manager.add_system_log(
+                "memory_warning",
+                f"High memory usage detected: {self._format_bytes(process_memory.rss)}",
+                {"pid": pid, "rss": process_memory.rss, "vms": process_memory.vms},
+            )
+
+            # 如果内存使用过高，可以尝试调用GC或其他方法释放内存
+            # 这里只是记录日志，实际应用中可以添加更多的内存优化策略
+
+        except Exception as e:
+            logger.error(f"Error optimizing daemon memory: {e}")
+
+    def _optimize_daemon_cpu(self, pid: int):
+        """尝试优化守护进程的CPU使用"""
+        try:
+            process = psutil.Process(pid)
+            cpu_percent = process.cpu_percent(interval=1)
+
+            logger.warning(f"Daemon process (PID {pid}) CPU usage: {cpu_percent:.1f}%")
+
+            # 记录CPU使用情况
+            self.db_manager.add_system_log(
+                "cpu_warning",
+                f"High CPU usage detected: {cpu_percent:.1f}%",
+                {"pid": pid, "cpu_percent": cpu_percent},
+            )
+
+            # 如果CPU使用过高，可以尝试降低进程优先级或其他方法
+            # 这里只是记录日志，实际应用中可以添加更多的CPU优化策略
+
+        except Exception as e:
+            logger.error(f"Error optimizing daemon CPU: {e}")
+
+    def _start_health_report(self):
+        """启动健康状态报告线程"""
+        # 停止已有的健康状态报告线程
+        self._stop_health_report()
+
+        # 创建新的健康状态报告线程
+        self._health_report_thread = threading.Thread(
+            target=self._health_report_loop, daemon=True, name="HealthReport"
+        )
+        self._health_report_thread.start()
+        logger.info(
+            f"Health report thread started with interval {self._health_report_interval} seconds"
+        )
+
+    def _stop_health_report(self):
+        """停止健康状态报告线程"""
+        if self._health_report_thread and self._health_report_thread.is_alive():
+            self._shutdown_event.set()
+            self._health_report_thread.join(timeout=5)
+            logger.info("Health report thread stopped")
+
+    def _health_report_loop(self):
+        """健康状态报告循环"""
+        logger.info("Health report loop started")
+
+        while not self._shutdown_event.is_set():
+            try:
+                # 检查是否到了生成报告的时间
+                current_time = time.time()
+                if (
+                    current_time - self._last_health_report_time
+                    > self._health_report_interval
+                ):
+                    self._last_health_report_time = current_time
+                    self._generate_health_report()
+
+            except Exception as e:
+                logger.error(f"Error in health report loop: {e}")
+
+            # 等待下一次检查
+            self._shutdown_event.wait(
+                min(300, self._health_report_interval)
+            )  # 最多等待5分钟
+
+        logger.info("Health report loop stopped")
+
+    def _generate_health_report(self):
+        """生成健康状态报告"""
+        try:
+            # 获取守护进程状态
+            daemon_status = self.get_daemon_status(detailed=True)
+
+            # 获取系统资源使用情况
+            system_resources = self._get_system_resources()
+
+            # 获取最近的系统日志
+            recent_logs = self.db_manager.get_recent_system_logs(limit=20)
+            recent_logs_summary = {
+                "total": len(recent_logs),
+                "warnings": len(
+                    [log for log in recent_logs if "warning" in log.log_type.lower()]
+                ),
+                "errors": len(
+                    [log for log in recent_logs if "error" in log.log_type.lower()]
+                ),
+            }
+
+            # 生成报告
+            report = {
+                "timestamp": datetime.now().isoformat(),
+                "daemon_status": daemon_status,
+                "system_resources": system_resources,
+                "recent_logs_summary": recent_logs_summary,
+                "restart_attempts": self._restart_attempts,
+                "resource_warnings": self._resource_warnings,
+            }
+
+            # 记录健康状态报告
+            self.db_manager.add_system_log(
+                "health_report", "Periodic health report generated", report
+            )
+
+            logger.info("Health report generated successfully")
+
+            # 如果有警告或错误，记录更详细的日志
+            if recent_logs_summary["warnings"] > 0 or recent_logs_summary["errors"] > 0:
+                logger.warning(
+                    f"Health report contains warnings/errors: "
+                    f"{recent_logs_summary['warnings']} warnings, "
+                    f"{recent_logs_summary['errors']} errors"
+                )
+
+        except Exception as e:
+            logger.error(f"Error generating health report: {e}")

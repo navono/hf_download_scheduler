@@ -488,3 +488,16 @@ class SchedulerService:
         except Exception as e:
             logger.error(f"Error getting pending models: {e}")
             return []
+
+    def get_all_schedules(self) -> dict[str, Any]:
+        """Get all schedule configurations."""
+        try:
+            schedules = self.db_manager.get_all_schedules()
+            return {
+                "status": "success",
+                "schedules": schedules,
+                "count": len(schedules),
+            }
+        except Exception as e:
+            logger.error(f"Error getting all schedules: {e}")
+            return {"status": "error", "error": str(e)}

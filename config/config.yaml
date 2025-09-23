@@ -32,11 +32,22 @@ log:
 # Monitoring settings
 monitoring:
   health_check_interval: 60  # Health check interval in seconds (default: 60 = 1 minute)
-  models_check_interval: 10  # Models file check interval in seconds (default: 60 = 1 minute)
+  models_check_interval: 10  # Models file check interval in seconds (default: 10 seconds)
+  watchdog_enabled: true     # Enable daemon watchdog monitoring
+  watchdog_interval: 30      # Watchdog check interval in seconds (default: 30 seconds)
+  auto_restart: true         # Automatically restart daemon if it crashes
+  max_restart_attempts: 3    # Maximum number of restart attempts before requiring manual intervention
+  resource_monitor_enabled: true      # Enable system resource monitoring
+  resource_monitor_interval: 60       # Resource monitor check interval in seconds (default: 60 seconds)
+  memory_threshold: 90               # Memory usage threshold percentage (default: 90%)
+  cpu_threshold: 95                  # CPU usage threshold percentage (default: 95%)
+  log_resource_warnings: true        # Log resource warnings to database
+  health_report_enabled: true        # Enable periodic health status reports
+  health_report_interval: 3600       # Health report interval in seconds (default: 3600 = 1 hour)
 
 # Schedule settings (will be created if none exists)
 default_schedule:
   enabled: true
   type: daily
-  time: "16:30"
+  time: "22:00"
   max_concurrent_downloads: 1

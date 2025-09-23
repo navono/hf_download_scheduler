@@ -117,10 +117,13 @@ def start(ctx, foreground):
         elif result["status"] == "already_running":
             click.echo(f"Daemon is already running (PID {result['pid']})")
         else:
-            error_msg = result.get('error', 'Unknown error')
-            stderr = result.get('stderr', '')
+            error_msg = result.get("error", "Unknown error")
+            stderr = result.get("stderr", "")
             if stderr:
-                click.echo(f"Failed to start daemon: {error_msg}\nError details:\n{stderr}", err=True)
+                click.echo(
+                    f"Failed to start daemon: {error_msg}\nError details:\n{stderr}",
+                    err=True,
+                )
             else:
                 click.echo(f"Failed to start daemon: {error_msg}", err=True)
             ctx.exit(1)

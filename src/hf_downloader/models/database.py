@@ -201,6 +201,39 @@ class SystemConfiguration(Base):
         }
 
 
+class SystemLog(Base):
+    """System logs for monitoring and debugging."""
+
+    __tablename__ = "system_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    log_type = Column(String(50), nullable=False)  # e.g., "error", "warning", "info"
+    message = Column(Text, nullable=False)
+    details = Column(Text, nullable=True)  # JSON stored as text
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    def __repr__(self):
+        return f"<SystemLog(id={self.id}, type='{self.log_type}', created_at='{self.created_at}')>"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert system log to dictionary."""
+        return {
+            "id": self.id,
+            "log_type": self.log_type,
+            "message": self.message,
+            "details": json.loads(self.details) if self.details else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def get_details(self) -> dict[str, Any]:
+        """Get parsed details."""
+        return json.loads(self.details) if self.details else {}
+
+    def set_details(self, details: dict[str, Any]):
+        """Set details from dictionary."""
+        self.details = json.dumps(details)
+
+
 class DatabaseManager:
     """Database operations manager."""
 
@@ -845,3 +878,51 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error getting database stats: {e}")
             return {"error": str(e)}
+
+    def add_system_log(
+        self, log_type: str, message: str, details: dict[str, Any] | None = None
+    ) -> SystemLog:
+        """Add a system log entry."""
+        try:
+            with self.get_session() as session:
+                log_entry = SystemLog(
+                    log_type=log_type,
+                    message=message,
+                    details=json.dumps(details) if details else None,
+                )
+                session.add(log_entry)
+                session.commit()
+                session.refresh(log_entry)
+
+                logger.info(f"Added system log: {log_type} - {message}")
+                return log_entry
+
+        except Exception as e:
+            logger.error(f"Error adding system log: {e}")
+            # Return a dummy log entry since we couldn't save to the database
+            return SystemLog(
+                id=-1,
+                log_type=log_type,
+                message=message,
+                details=json.dumps({"error": str(e), **details})
+                if details
+                else json.dumps({"error": str(e)}),
+            )
+
+    def get_recent_system_logs(
+        self, limit: int = 100, log_type: str | None = None
+    ) -> list[SystemLog]:
+        """Get recent system logs."""
+        try:
+            with self.get_session() as session:
+                query = session.query(SystemLog)
+
+                if log_type:
+                    query = query.filter(SystemLog.log_type == log_type)
+
+                logs = query.order_by(SystemLog.created_at.desc()).limit(limit).all()
+                return logs
+
+        except Exception as e:
+            logger.error(f"Error getting system logs: {e}")
+            return []
