@@ -15,6 +15,7 @@ from ..core.config import ConfigManager
 from ..models.database import DatabaseManager
 from ..services.downloader import DownloaderService
 from ..services.scheduler import SchedulerService
+from ..services.integration_service import IntegrationService
 from ..utils import Config, CustomizeLogger
 
 # Use the same logger instance as the main module
@@ -34,6 +35,7 @@ class Daemon:
         self.db_manager = DatabaseManager(db_path)
         self.downloader_service = DownloaderService(self.config, db_path)
         self.scheduler_service = SchedulerService(self.config, db_path)
+        self.integration_service = IntegrationService(config_path, db_path, pid_path, log_level)
         self.pid_path = Path(pid_path)
         self.running = False
 
@@ -149,14 +151,14 @@ class Daemon:
     def _display_pending_models(self):
         """Display the list of pending models that will be downloaded on next run."""
         try:
-            # Get pending models from scheduler service
-            pending_models = self.scheduler_service.get_pending_models()
+            # Get enabled pending models from integration service (filters out disabled models)
+            pending_models = self.integration_service.get_enabled_pending_models()
 
             if not pending_models:
                 logger.info("No pending models to download on next run")
                 return
 
-            # Log the number of pending models
+            # Log the number of enabled pending models
             logger.info(
                 f"Found {len(pending_models)} pending models for next scheduled download:"
             )
