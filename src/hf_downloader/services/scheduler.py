@@ -40,6 +40,7 @@ class SchedulerService:
         self._stop_event = threading.Event()
         self._jobs: dict[str, schedule.Job] = {}
         self.downloader_service = None  # Will be set by dependency injection
+        self.integration_service = None  # Optional integration service for enhanced functionality
 
         # Initialize default schedule if none exists
         self._initialize_default_schedule()
@@ -344,9 +345,9 @@ class SchedulerService:
             else:
                 logger.info("No time window restriction, proceeding with download")
 
-            # Get models with pending status
-            pending_models = self.db_manager.get_models_by_status("pending")
-            logger.debug(f"Found {len(pending_models)} pending models")
+            # Get enabled models with pending status
+            pending_models = self.get_pending_models()
+            logger.debug(f"Found {len(pending_models)} enabled pending models")
 
             if not pending_models:
                 logger.info("No pending models to download")
@@ -505,7 +506,13 @@ class SchedulerService:
     def get_pending_models(self) -> list[dict[str, Any]]:
         """Get list of pending models that will be downloaded on next run."""
         try:
-            # Get models with pending status
+            # Use integration service if available (it checks enabled field)
+            if self.integration_service:
+                logger.debug("Using integration service to get enabled pending models")
+                return self.integration_service.get_enabled_pending_models()
+
+            # Fallback to old method (doesn't check enabled field)
+            logger.debug("Integration service not available, using fallback method")
             pending_models = self.db_manager.get_models_by_status("pending")
             logger.debug(f"Found {len(pending_models)} pending models")
 

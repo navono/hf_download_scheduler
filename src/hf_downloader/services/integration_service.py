@@ -49,6 +49,9 @@ class IntegrationService:
         )
         self.cli_integration = CLIIntegrationService(self.service_container)
 
+        # Set integration service reference in scheduler for enhanced functionality
+        self.service_container.scheduler_service.integration_service = self
+
         # Get config
         self.config = self.service_container.config
 
@@ -545,6 +548,45 @@ class IntegrationService:
         except Exception as e:
             context = ErrorContext("model_sync_json_to_db", "IntegrationService")
             self.error_handler.handle_error(e, context, reraise=False)
+
+    def get_enabled_pending_models(self) -> list[dict[str, Any]]:
+        """Get list of enabled pending models that will be downloaded on next run."""
+        try:
+            # Get models with pending status from database
+            pending_models = self.service_container.db_manager.get_models_by_status("pending")
+            logger.debug(f"Found {len(pending_models)} pending models in database")
+
+            # Get models from JSON to check enabled status
+            json_models = self.model_sync_service.load_models_from_json()
+            enabled_model_names = {
+                model["name"] for model in json_models
+                if model.get("enabled", True)  # Default to True if enabled field is missing
+            }
+
+            # Filter to only include enabled models
+            enabled_pending_models = []
+            for model in pending_models:
+                if model.name in enabled_model_names:
+                    model_dict = {
+                        "id": model.id,
+                        "name": model.name,
+                        "status": model.status,
+                    }
+                    # Add metadata if available
+                    metadata = model.get_metadata()
+                    if metadata:
+                        model_dict["priority"] = metadata.get("priority", "medium")
+
+                    enabled_pending_models.append(model_dict)
+                else:
+                    logger.debug(f"Model {model.name} is disabled, excluding from download queue")
+
+            logger.info(f"Found {len(enabled_pending_models)} enabled pending models for download")
+            return enabled_pending_models
+
+        except Exception as e:
+            logger.error(f"Error getting enabled pending models: {e}")
+            return []
 
     def sync_db_status_to_json_immediate(self, model_name: str = None) -> bool:
         """
