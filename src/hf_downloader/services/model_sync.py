@@ -153,10 +153,12 @@ class ModelSyncService:
                             logger.debug(
                                 f"Model exists with empty status, using DB status: {model_name}"
                             )
-                        # 如果数据库中的状态是 pending、failed 或 completed，可以重置为 pending 进行重新下载
-                        elif db_status in ["pending", "failed"] or json_model.get(
+                        # 如果数据库中的状态是 pending、failed，可以重置为 pending 进行重新下载
+                        # 如果是 completed 或 downloading 状态，数据库状态优先，不能重置
+                        elif db_status in ["pending", "failed"] and json_model.get(
                             "force_reset", False
                         ):
+                            # 只有明确要求强制重置时，才将 pending/failed 状态重置为 pending
                             # 更新模型元数据
                             metadata = {
                                 "source": "json_config",
@@ -188,10 +190,10 @@ class ModelSyncService:
                             )
 
                             logger.info(
-                                f"Reset model {model_name} to pending with updated metadata"
+                                f"Force reset model {model_name} to pending with updated metadata"
                             )
-                        # 如果模型正在下载中或已完成，保持数据库状态
-                        elif db_status in ["downloading", "completed"]:
+                        # 如果数据库中的状态是 completed 或 downloading，数据库状态优先
+                        elif db_status in ["completed", "downloading"]:
                             sync_results["skipped"] += 1
                             sync_results["details"].append(
                                 {
@@ -202,7 +204,21 @@ class ModelSyncService:
                                 }
                             )
                             logger.debug(
-                                f"Model {model_name} is {db_status}, keeping DB status"
+                                f"Model {model_name} is {db_status}, keeping DB status (has precedence)"
+                            )
+                        # 如果数据库状态是 pending 或 failed，但 JSON 也是 pending，不需要更新
+                        elif db_status in ["pending", "failed"] and json_status == "pending":
+                            sync_results["skipped"] += 1
+                            sync_results["details"].append(
+                                {
+                                    "model": model_name,
+                                    "action": "skipped",
+                                    "db_status": db_status,
+                                    "json_status": json_status,
+                                }
+                            )
+                            logger.debug(
+                                f"Model {model_name} is already {db_status}, no change needed"
                             )
                         else:
                             # 其他情况，数据库状态优先
