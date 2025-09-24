@@ -50,6 +50,8 @@ class Config:
     # Default schedule configuration
     default_schedule: dict[str, Any] | None = None
 
+    # Time window configuration is now nested under default_schedule
+
     # Monitoring configuration
     monitoring: dict[str, Any] = field(
         default_factory=lambda: {
@@ -85,6 +87,40 @@ class Config:
             config.timeout_seconds = int(os.getenv("HF_DOWNLOADER_TIMEOUT"))
         if os.getenv("HF_DOWNLOADER_DB_PATH"):
             config.database_path = os.getenv("HF_DOWNLOADER_DB_PATH")
+
+        # Handle time window environment variables (now nested in default_schedule)
+        if os.getenv("HF_DOWNLOADER_TIME_WINDOW_ENABLED"):
+            if not config.default_schedule:
+                config.default_schedule = {}
+            if "time_window" not in config.default_schedule:
+                config.default_schedule["time_window"] = {}
+            config.default_schedule["time_window"]["enabled"] = os.getenv(
+                "HF_DOWNLOADER_TIME_WINDOW_ENABLED"
+            ).lower() in ["true", "1", "yes", "on"]
+        if os.getenv("HF_DOWNLOADER_TIME_WINDOW_START"):
+            if not config.default_schedule:
+                config.default_schedule = {}
+            if "time_window" not in config.default_schedule:
+                config.default_schedule["time_window"] = {}
+            config.default_schedule["time_window"]["start_time"] = os.getenv(
+                "HF_DOWNLOADER_TIME_WINDOW_START"
+            )
+        if os.getenv("HF_DOWNLOADER_TIME_WINDOW_END"):
+            if not config.default_schedule:
+                config.default_schedule = {}
+            if "time_window" not in config.default_schedule:
+                config.default_schedule["time_window"] = {}
+            config.default_schedule["time_window"]["end_time"] = os.getenv(
+                "HF_DOWNLOADER_TIME_WINDOW_END"
+            )
+        if os.getenv("HF_DOWNLOADER_TIME_WINDOW_TIMEZONE"):
+            if not config.default_schedule:
+                config.default_schedule = {}
+            if "time_window" not in config.default_schedule:
+                config.default_schedule["time_window"] = {}
+            config.default_schedule["time_window"]["timezone"] = os.getenv(
+                "HF_DOWNLOADER_TIME_WINDOW_TIMEZONE"
+            )
 
         return config
 
@@ -137,10 +173,63 @@ class Config:
                 "log_level must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL"
             )
 
+        # Validate time window configuration if nested in default_schedule
+        if self.default_schedule and "time_window" in self.default_schedule:
+            tw_errors = self._validate_time_window(self.default_schedule["time_window"])
+            errors.extend(tw_errors)
+
         if errors:
             raise ValueError(f"Configuration validation failed: {'; '.join(errors)}")
 
         return True
+
+    def _validate_time_window(self, time_window: dict[str, Any]) -> list[str]:
+        """Validate time window configuration."""
+        errors = []
+
+        # Check required fields
+        if not isinstance(time_window.get("enabled"), bool):
+            errors.append("time_window.enabled must be a boolean")
+
+        # Validate time format
+        start_time = time_window.get("start_time", "22:00")
+        end_time = time_window.get("end_time", "07:00")
+
+        if not self._validate_time_format(start_time):
+            errors.append(f"Invalid start_time format: {start_time}. Expected HH:MM")
+
+        if not self._validate_time_format(end_time):
+            errors.append(f"Invalid end_time format: {end_time}. Expected HH:MM")
+
+        # Validate timezone
+        timezone = time_window.get("timezone", "local")
+        if timezone != "local":
+            errors.append(
+                f"Unsupported timezone: {timezone}. Only 'local' is supported"
+            )
+
+        return errors
+
+    def _validate_time_format(self, time_str: str) -> bool:
+        """Validate time format HH:MM."""
+        if not time_str or len(time_str) != 5:
+            return False
+
+        if time_str[2] != ":":
+            return False
+
+        try:
+            hours = int(time_str[:2])
+            minutes = int(time_str[3:5])
+
+            if hours < 0 or hours > 23:
+                return False
+            if minutes < 0 or minutes > 59:
+                return False
+
+            return True
+        except ValueError:
+            return False
 
 
 class ConfigManager:
@@ -169,6 +258,10 @@ class ConfigManager:
                 "chunk_size": os.getenv("HF_DOWNLOADER_CHUNK_SIZE"),
                 "user_agent": os.getenv("HF_DOWNLOADER_USER_AGENT"),
                 "concurrent_downloads": os.getenv("HF_DOWNLOADER_CONCURRENT_DOWNLOADS"),
+                "time_window_enabled": os.getenv("HF_DOWNLOADER_TIME_WINDOW_ENABLED"),
+                "time_window_start": os.getenv("HF_DOWNLOADER_TIME_WINDOW_START"),
+                "time_window_end": os.getenv("HF_DOWNLOADER_TIME_WINDOW_END"),
+                "time_window_timezone": os.getenv("HF_DOWNLOADER_TIME_WINDOW_TIMEZONE"),
             }
 
             for key, value in env_overrides.items():
@@ -184,6 +277,39 @@ class ConfigManager:
                         setattr(
                             config, key, value.lower() in ["true", "1", "yes", "on"]
                         )
+                    elif key in [
+                        "time_window_enabled",
+                        "time_window_start",
+                        "time_window_end",
+                        "time_window_timezone",
+                    ]:
+                        # Handle time window nested configuration (now under default_schedule)
+                        if not config.default_schedule:
+                            config.default_schedule = {}
+                        if "time_window" not in config.default_schedule:
+                            config.default_schedule["time_window"] = {}
+
+                        # Map environment variable names to time window keys
+                        tw_key_map = {
+                            "time_window_enabled": "enabled",
+                            "time_window_start": "start_time",
+                            "time_window_end": "end_time",
+                            "time_window_timezone": "timezone",
+                        }
+
+                        tw_key = tw_key_map.get(key, key)
+                        if key == "time_window_enabled":
+                            config.default_schedule["time_window"][tw_key] = (
+                                value.lower()
+                                in [
+                                    "true",
+                                    "1",
+                                    "yes",
+                                    "on",
+                                ]
+                            )
+                        else:
+                            config.default_schedule["time_window"][tw_key] = value
                     else:
                         setattr(config, key, value)
 

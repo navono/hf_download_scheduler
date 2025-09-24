@@ -99,12 +99,16 @@ class ProcessManager:
             # 停止守护进程监控
             self._stop_watchdog()
 
-            if not self._is_daemon_running():
-                return {"status": "not_running", "message": "Daemon is not running"}
-
+            # First try to get PID from PID file
             pid = self._get_current_pid()
+
             if not pid:
-                return {"status": "no_pid_file", "message": "No PID file found"}
+                # If no PID file, try to find daemon process by name
+                logger.warning("No PID file found, trying to find daemon process by name")
+                pid = self._find_daemon_process_by_name()
+
+            if not pid:
+                return {"status": "not_running", "message": "Daemon is not running"}
 
             # Try graceful shutdown first
             if self._stop_daemon_gracefully(pid):
@@ -934,3 +938,57 @@ class ProcessManager:
 
         except Exception as e:
             logger.error(f"Error generating health report: {e}")
+
+    def _find_daemon_process_by_name(self) -> int | None:
+        """Find daemon process by name when PID file is missing."""
+        try:
+            import subprocess
+
+            # Look for python processes with daemon main module
+            cmd = ["ps", "aux"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                logger.error("Failed to execute ps command")
+                return None
+
+            # Parse ps output to find daemon process
+            for line in result.stdout.split('\n'):
+                if 'hf_downloader.daemon.main' in line and 'grep' not in line:
+                    # Extract PID from the line (second field)
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            pid = int(parts[1])
+                            # Verify it's actually our daemon process
+                            if self._verify_daemon_process(pid):
+                                logger.info(f"Found daemon process with PID: {pid}")
+                                return pid
+                        except (ValueError, IndexError):
+                            continue
+
+            logger.info("No daemon process found by name")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding daemon process by name: {e}")
+            return None
+
+    def _verify_daemon_process(self, pid: int) -> bool:
+        """Verify that the process is actually our daemon."""
+        try:
+            import subprocess
+
+            # Check process command line to confirm it's our daemon
+            cmd = ["ps", "-p", str(pid), "-o", "command="]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                return False
+
+            cmdline = result.stdout.strip()
+            return 'hf_downloader.daemon.main' in cmdline
+
+        except Exception as e:
+            logger.error(f"Error verifying daemon process {pid}: {e}")
+            return False

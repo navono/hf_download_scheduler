@@ -79,11 +79,67 @@ class IntegrationService:
         logger.info("Auto-syncing models from JSON to database on startup")
         self.sync_models_json_to_db()
 
+        # 检查并修复僵尸下载状态
+        self._cleanup_zombie_downloads()
+
         # Initialize monitoring
         self._start_health_monitoring()
 
         # 启动模型文件监控
         self._start_models_watch()
+
+    def _cleanup_zombie_downloads(self):
+        """清理僵尸下载状态。"""
+        try:
+            logger.info("Checking for zombie download states...")
+
+            # 获取所有状态为 downloading 的模型
+            downloading_models = self.service_container.db_manager.get_models_by_status("downloading")
+
+            if not downloading_models:
+                logger.info("No models in downloading state found")
+                return
+
+            logger.info(f"Found {len(downloading_models)} models in downloading state")
+
+            # 获取所有活跃的下载会话
+            active_sessions = self.service_container.db_manager.get_active_download_sessions()
+            active_session_model_ids = {session.model_id for session in active_sessions}
+
+            # 检查是否有对应的活跃下载线程
+            active_downloads = getattr(self.service_container.downloader_service, '_active_downloads', {})
+            active_download_names = set(active_downloads.keys())
+
+            for model in downloading_models:
+                if model.name not in active_download_names:
+                    logger.warning(f"Found zombie download state for model: {model.name}")
+
+                    # 检查是否有活跃的下载会话但没有对应的下载线程
+                    if model.id in active_session_model_ids:
+                        logger.info(f"Model {model.name} has active session but no download thread")
+                        # 将相关会话标记为失败
+                        for session in active_sessions:
+                            if session.model_id == model.id:
+                                logger.info(f"Updating zombie session {session.id} to failed")
+                                self.service_container.db_manager.update_download_session(
+                                    session.id, "failed", "Zombie download detected on startup"
+                                )
+
+                    # 重置模型状态为 pending
+                    logger.info(f"Resetting model {model.name} status from downloading to pending")
+                    self.service_container.db_manager.update_model_status(model.id, "pending")
+
+                    # 同步到JSON
+                    self.sync_db_status_to_json_immediate(model.name)
+
+                    logger.info(f"Cleaned up zombie download state for {model.name}")
+                else:
+                    logger.debug(f"Model {model.name} has active download thread")
+
+            logger.info("Zombie download cleanup completed")
+
+        except Exception as e:
+            logger.error(f"Error during zombie download cleanup: {e}")
 
     def _register_error_callbacks(self):
         """Register error callbacks."""
@@ -262,7 +318,7 @@ class IntegrationService:
         self.models_watch_thread.start()
 
     def _models_watch_loop(self):
-        """Models file watch loop."""
+        """Models file watch loop with status synchronization."""
         # 尝试从配置文件中读取
         if hasattr(self.config, "monitoring") and isinstance(
             self.config.monitoring, dict
@@ -270,23 +326,46 @@ class IntegrationService:
             models_check_interval = self.config.monitoring.get(
                 "models_check_interval", 60
             )
+            status_sync_interval = self.config.monitoring.get(
+                "status_sync_interval",
+                30,  # 每30秒同步一次状态
+            )
         else:
             models_check_interval = 60
+            status_sync_interval = 30
+
         logger.debug(f"Models check interval set to {models_check_interval} seconds")
+        logger.debug(f"Status sync interval set to {status_sync_interval} seconds")
+
+        status_sync_counter = 0
+
         while not self.shutdown_event:
             try:
-                logger.trace("Model config check modified")
+                status_sync_counter += 1
+
                 # 检查文件是否有变化
                 current_mtime = self._get_models_file_mtime()
                 if current_mtime > self.models_file_last_modified:
                     logger.info("Models file changed, resyncing with database")
                     self.sync_models_json_to_db()
                     self.models_file_last_modified = current_mtime
+                    status_sync_counter = 0  # 重置计数器
 
-                # 将数据库中的模型状态同步到 models.json 文件
-                self.model_sync_service.sync_db_status_to_json()
+                # 定期同步数据库状态到JSON
+                elif status_sync_counter >= status_sync_interval:
+                    logger.debug("Performing periodic status sync from DB to JSON")
+                    try:
+                        sync_result = self.model_sync_service.sync_status_changes_only()
+                        if sync_result["updated"] > 0:
+                            logger.info(
+                                f"Status sync: {sync_result['updated']} models updated"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error during periodic status sync: {e}")
 
-                time.sleep(models_check_interval)
+                    status_sync_counter = 0
+
+                time.sleep(1)  # 每秒检查一次
             except Exception as e:
                 logger.error(f"Error in models watch loop: {e}")
                 time.sleep(30)  # Wait before retry
@@ -451,13 +530,43 @@ class IntegrationService:
                 f"Model sync from JSON to DB completed successfully: {result['added']} added, {result.get('updated', 0)} updated, {result['skipped']} skipped"
             )
 
+            # Log current download queue with priorities
+            pending_models = self.service_container.db_manager.get_models_by_status("pending")
+            if pending_models:
+                logger.info("Current download queue (ordered by priority):")
+                for i, model in enumerate(pending_models, 1):
+                    priority = model.get_metadata().get("priority", "medium") if model.get_metadata() else "medium"
+                    logger.info(f"  {i}. {model.name} (Priority: {priority})")
+            else:
+                logger.info("Download queue is empty")
+
             return result
 
         except Exception as e:
             context = ErrorContext("model_sync_json_to_db", "IntegrationService")
             self.error_handler.handle_error(e, context, reraise=False)
 
-            return {"status": "failed", "error": str(e)}
+    def sync_db_status_to_json_immediate(self, model_name: str = None) -> bool:
+        """
+        立即同步数据库状态到JSON文件。
+        如果指定了model_name，只同步该模型的状态。
+        """
+        try:
+            if model_name:
+                # 只同步特定模型的状态
+                return self.model_sync_service.update_model_status_in_json(
+                    model_name,
+                    self.model_sync_service.get_model_status_from_db(model_name)
+                    or "pending",
+                )
+            else:
+                # 同步所有模型的状态
+                result = self.model_sync_service.sync_status_changes_only()
+                return result["updated"] > 0
+
+        except Exception as e:
+            logger.error(f"Error in immediate status sync: {e}")
+            return False
 
     @handle_errors("IntegrationService", "sync_models_db_to_json", reraise=False)
     def sync_models_db_to_json(self) -> dict[str, Any]:

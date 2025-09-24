@@ -1,27 +1,33 @@
 {
   "models": [
     {
-      "name": "Qwen/Qwen3-0.6B",
-      "description": "",
-      "size_estimate": "",
+      "name": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
       "priority": "high",
-      "tags": [
-        "",
-        ""
-      ],
-      "status": "completed",
+      "status": "pending",
+      "enabled": true
+    },
+    {
+      "name": "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B",
+      "priority": "medium",
+      "status": "pending",
+      "enabled": true
+    },
+    {
+      "name": "zai-org/GLM-4.5-Air-FP8",
+      "priority": "low",
+      "status": "pending",
       "enabled": true
     }
   ],
   "settings": {
     "auto_cleanup": true,
     "cleanup_age_days": 30,
-    "max_total_size": "500GB",
+    "max_total_size": "2048GB",
     "check_frequency": "daily"
   },
   "metadata": {
     "version": "1.0",
     "created": "2025-01-01T00:00:00Z",
-    "last_updated": "2025-09-19T08:28:55.459800+00:00"
+    "last_updated": "2025-09-24T00:14:10.725967+00:00"
   }
 }

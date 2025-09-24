@@ -16,6 +16,7 @@ from loguru import logger
 
 from ..core.config import Config
 from ..models.database import DatabaseManager, ScheduleConfiguration
+from .time_window import TimeWindow
 
 
 class SchedulerState(Enum):
@@ -57,6 +58,20 @@ class SchedulerService:
                     "max_concurrent_downloads", self.config.concurrent_downloads
                 )
 
+                # Extract time window configuration from nested structure
+                time_window_config = default_schedule.get("time_window", {})
+                time_window_enabled = time_window_config.get("enabled", False)
+                time_window_start = (
+                    time_window_config.get("start_time", "22:00")
+                    if time_window_enabled
+                    else None
+                )
+                time_window_end = (
+                    time_window_config.get("end_time", "07:00")
+                    if time_window_enabled
+                    else None
+                )
+
                 logger.info(
                     f"Using default schedule from config: {schedule_type} at {schedule_time}"
                 )
@@ -74,6 +89,9 @@ class SchedulerService:
                         type=schedule_type,
                         time=schedule_time,
                         max_concurrent_downloads=max_concurrent,
+                        time_window_enabled=time_window_enabled,
+                        time_window_start=time_window_start,
+                        time_window_end=time_window_end,
                     )
                 else:
                     # 创建新的调度
@@ -85,6 +103,9 @@ class SchedulerService:
                         type=schedule_type,
                         time=schedule_time,
                         max_concurrent_downloads=max_concurrent,
+                        time_window_enabled=time_window_enabled,
+                        time_window_start=time_window_start,
+                        time_window_end=time_window_end,
                     )
             else:
                 # 如果配置文件中没有默认调度设置，则创建一个默认的
@@ -289,6 +310,40 @@ class SchedulerService:
                 logger.error("Downloader service not available")
                 return
 
+            # Get schedule configuration
+            schedule_config = self.db_manager.get_active_schedule()
+            if not schedule_config:
+                logger.error("No active schedule configuration found")
+                return
+
+            # Check if schedule is enabled
+            if not schedule_config.enabled:
+                logger.info(f"Schedule {schedule_id} is disabled, skipping download")
+                return
+
+            # Check time window restrictions
+            if schedule_config.time_window_enabled:
+                time_window = TimeWindow(
+                    schedule_config.time_window_start or "22:00",
+                    schedule_config.time_window_end or "07:00",
+                    enabled=True,
+                )
+
+                if not time_window.is_current_time_in_window():
+                    logger.info(
+                        f"Current time {start_time.strftime('%H:%M')} is outside time window "
+                        f"({schedule_config.time_window_start}-{schedule_config.time_window_end}), "
+                        "skipping download"
+                    )
+                    return
+
+                logger.info(
+                    f"Time window check passed: current time {start_time.strftime('%H:%M')} "
+                    f"is within window ({schedule_config.time_window_start}-{schedule_config.time_window_end})"
+                )
+            else:
+                logger.info("No time window restriction, proceeding with download")
+
             # Get models with pending status
             pending_models = self.db_manager.get_models_by_status("pending")
             logger.debug(f"Found {len(pending_models)} pending models")
@@ -303,12 +358,6 @@ class SchedulerService:
             )
             for i, model in enumerate(pending_models, 1):
                 logger.info(f"  {i}. {model.name}")
-
-            # Get schedule configuration
-            schedule_config = self.db_manager.get_active_schedule()
-            if not schedule_config:
-                logger.error("No active schedule configuration found")
-                return
 
             # Limit concurrent downloads
             max_downloads = min(
@@ -470,17 +519,9 @@ class SchedulerService:
                 }
 
                 # Add metadata if available
-                if hasattr(model, "metadata") and model.metadata:
-                    if isinstance(model.metadata, dict):
-                        model_dict["priority"] = model.metadata.get(
-                            "priority", "medium"
-                        )
-                        model_dict["size_estimate"] = model.metadata.get(
-                            "size_estimate", ""
-                        )
-                        model_dict["description"] = model.metadata.get(
-                            "description", ""
-                        )
+                metadata = model.get_metadata()
+                if metadata:
+                    model_dict["priority"] = metadata.get("priority", "medium")
 
                 result.append(model_dict)
 

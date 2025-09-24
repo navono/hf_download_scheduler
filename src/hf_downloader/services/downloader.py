@@ -52,14 +52,31 @@ class DownloaderService:
         self._shutdown_event = threading.Event()
         self._original_sigint = None
 
+        # 外部服务引用
+        self.integration_service = None
+
         # Set up signal handler for graceful shutdown
         self._setup_signal_handler()
 
+    def set_integration_service(self, integration_service):
+        """设置集成服务引用，用于状态同步。"""
+        self.integration_service = integration_service
+
+    def _sync_model_status_immediate(self, model_name: str, status: str):
+        """立即同步模型状态到JSON文件。"""
+        try:
+            if self.integration_service:
+                self.integration_service.sync_db_status_to_json_immediate(model_name)
+            elif self.model_sync_service:
+                self.model_sync_service.update_model_status_in_json(model_name, status)
+        except Exception as e:
+            logger.error(f"Error syncing model status for {model_name}: {e}")
+
         # Create download directory if it doesn't exist
-        if config.download_directory:
-            Path(config.download_directory).mkdir(parents=True, exist_ok=True)
+        if self.config.download_directory:
+            Path(self.config.download_directory).mkdir(parents=True, exist_ok=True)
             logger.info(
-                f"DownloaderService initialized with download directory: {config.download_directory}"
+                f"DownloaderService initialized with download directory: {self.config.download_directory}"
             )
         else:
             logger.warning(
@@ -81,6 +98,48 @@ class DownloaderService:
 
         self._original_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, signal_handler)
+
+        # 注册清理函数，确保进程退出时清理状态
+        import atexit
+        atexit.register(self._cleanup_on_exit)
+
+    def _cleanup_on_exit(self):
+        """进程退出时清理僵尸下载状态。"""
+        try:
+            logger.info("Cleaning up download states on exit...")
+
+            # 清理活跃的下载线程
+            for model_name, thread in list(self._active_downloads.items()):
+                if thread and thread.is_alive():
+                    logger.warning(f"Force stopping download thread for {model_name}")
+                    self._cancel_flags[model_name] = True
+                    thread.join(timeout=2)
+
+                # 将模型状态重置为pending
+                try:
+                    model = self.db_manager.get_model_by_name(model_name)
+                    if model and model.status == "downloading":
+                        logger.info(f"Resetting {model_name} status to pending on exit")
+                        self.db_manager.update_model_status(model.id, "pending")
+                        self._sync_model_status_immediate(model_name, "pending")
+                except Exception as e:
+                    logger.error(f"Error resetting model status for {model_name}: {e}")
+
+            # 清理下载会话
+            try:
+                active_sessions = self.db_manager.get_active_download_sessions()
+                for session in active_sessions:
+                    logger.info(f"Cleaning up active session {session.id}")
+                    self.db_manager.update_download_session(
+                        session.id, "failed", "Process exited unexpectedly"
+                    )
+            except Exception as e:
+                logger.error(f"Error cleaning up download sessions: {e}")
+
+            logger.info("Exit cleanup completed")
+
+        except Exception as e:
+            logger.error(f"Error during exit cleanup: {e}")
 
     def download_model(
         self,
@@ -119,6 +178,9 @@ class DownloaderService:
             # Update model status to downloading
             logger.info(f"Updating model {model_name} status to downloading")
             self.db_manager.update_model_status(model.id, "downloading")
+
+            # 立即同步状态到JSON
+            self._sync_model_status_immediate(model_name, "downloading")
 
             # Create download session
             session = self.db_manager.create_download_session(model.id, schedule_id)
@@ -185,20 +247,8 @@ class DownloaderService:
             self.db_manager.update_model_status(model_id, "completed", downloaded_path)
             self.db_manager.update_download_session(session_id, "completed")
 
-            # 同步更新 models.json 文件
-            if self.model_sync_service:
-                try:
-                    # 更新 models.json 中的模型状态
-                    self.model_sync_service.update_model_status_in_json(
-                        model_name, "completed"
-                    )
-                    logger.info(
-                        f"Updated model status in JSON for {model_name}: completed"
-                    )
-                except Exception as json_error:
-                    logger.error(
-                        f"Error updating models.json for {model_name}: {json_error}"
-                    )
+            # 立即同步状态到JSON
+            self._sync_model_status_immediate(model_name, "completed")
 
             if progress_callback:
                 progress_callback(
@@ -216,26 +266,15 @@ class DownloaderService:
 
         except DownloadError as e:
             logger.warning(f"Download cancelled for {model_name}: {e}")
-            # Update model and session status to cancelled/paused
+            # Update model and session status to cancelled/failed
             try:
-                self.db_manager.update_model_status(model_id, "paused")
+                self.db_manager.update_model_status(model_id, "failed")
                 self.db_manager.update_download_session(
                     session_id, "cancelled", error_message=str(e)
                 )
 
-                # 同步更新 models.json 文件
-                if self.model_sync_service:
-                    try:
-                        self.model_sync_service.update_model_status_in_json(
-                            model_name, "paused"
-                        )
-                        logger.info(
-                            f"Updated model status in JSON for {model_name}: paused (cancelled)"
-                        )
-                    except Exception as json_error:
-                        logger.error(
-                            f"Error updating models.json for {model_name}: {json_error}"
-                        )
+                # 立即同步状态到JSON
+                self._sync_model_status_immediate(model_name, "failed")
             except Exception as db_error:
                 logger.error(f"Error updating database after cancellation: {db_error}")
 
@@ -254,19 +293,8 @@ class DownloaderService:
                     session_id, "failed", error_message=str(e)
                 )
 
-                # 同步更新 models.json 文件
-                if self.model_sync_service:
-                    try:
-                        self.model_sync_service.update_model_status_in_json(
-                            model_name, "failed"
-                        )
-                        logger.info(
-                            f"Updated model status in JSON for {model_name}: failed"
-                        )
-                    except Exception as json_error:
-                        logger.error(
-                            f"Error updating models.json for {model_name}: {json_error}"
-                        )
+                # 立即同步状态到JSON
+                self._sync_model_status_immediate(model_name, "failed")
             except Exception as db_error:
                 logger.error(f"Error updating database after failure: {db_error}")
 

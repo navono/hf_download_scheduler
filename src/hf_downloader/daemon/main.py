@@ -165,15 +165,9 @@ class Daemon:
             for i, model in enumerate(pending_models, 1):
                 model_name = model.get("name", "Unknown")
                 model_priority = model.get("priority", "medium")
-                model_size = model.get("size_estimate", "Unknown size")
 
                 # Format the log message
-                if model_size and model_size != "":
-                    logger.info(
-                        f"  {i}. {model_name} (Priority: {model_priority}, Size: {model_size})"
-                    )
-                else:
-                    logger.info(f"  {i}. {model_name} (Priority: {model_priority})")
+                logger.info(f"  {i}. {model_name} (Priority: {model_priority})")
 
         except Exception as e:
             logger.error(f"Error displaying pending models: {e}")

@@ -111,6 +111,11 @@ dev-test: test-unit lint format-check
 quick-test:
 	uv run pytest -v tests/contract/ -x
 
+# Test time window functionality
+test-time-window:
+	python -m pytest tests/unit/test_time_window_validation.py tests/unit/test_time_window_current_time.py tests/unit/test_config_time_window.py -v -x
+	@echo "Note: Integration tests require additional setup and fixtures"
+
 # Test keyboard interrupt handling
 test-interrupt:
 	uv run python test_keyboard_interrupt.py

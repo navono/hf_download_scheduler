@@ -59,6 +59,34 @@ class ConfigurationService:
             ),
             "chunk_size": ("Download chunk size in bytes", str(config.chunk_size)),
             "user_agent": ("User agent string", config.user_agent),
+            "time_window_enabled": (
+                "Time window restriction enabled",
+                str(
+                    config.default_schedule.get("time_window", {}).get("enabled", False)
+                    if config.default_schedule
+                    else False
+                ),
+            ),
+            "time_window_start": (
+                "Time window start time",
+                config.default_schedule.get("time_window", {}).get(
+                    "start_time", "22:00"
+                )
+                if config.default_schedule
+                else "22:00",
+            ),
+            "time_window_end": (
+                "Time window end time",
+                config.default_schedule.get("time_window", {}).get("end_time", "07:00")
+                if config.default_schedule
+                else "07:00",
+            ),
+            "time_window_timezone": (
+                "Time window timezone",
+                config.default_schedule.get("time_window", {}).get("timezone", "local")
+                if config.default_schedule
+                else "local",
+            ),
         }
 
         for key, (description, value) in config_mappings.items():
@@ -117,7 +145,7 @@ class ConfigurationService:
             "log_backup_count",
             "chunk_size",
         ]
-        bool_keys = ["foreground"]
+        bool_keys = ["foreground", "time_window_enabled"]
 
         if key in int_keys:
             return int(value)

@@ -66,6 +66,9 @@ class ServiceContainer:
             # Wire up dependencies
             self._scheduler_service.downloader_service = self._downloader_service
 
+            # Set integration service reference in downloader service
+            self._downloader_service.set_integration_service(self)
+
             logger.info("All services initialized successfully")
 
         except Exception as e:

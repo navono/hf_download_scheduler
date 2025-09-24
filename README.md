@@ -5,6 +5,7 @@ A scheduled Hugging Face model downloader with background processing, configurat
 ## Features
 
 - **Scheduled Downloads**: Configurable scheduling with daily and weekly options
+- **Time Window Restrictions**: Configure specific time periods for downloads (e.g., 22:00-07:00)
 - **Background Processing**: Daemon mode for continuous operation
 - **Configuration Management**: YAML-based configuration with environment variable overrides
 - **Database Integration**: SQLite-based persistence for models, schedules, and download sessions
@@ -70,12 +71,17 @@ download_directory: ./models
 log_level: INFO
 max_retries: 5
 timeout_seconds: 3600
-concurrent_downloads: 2
+concurrent_downloads: 1
 default_schedule:
   enabled: true
   type: daily
-  time: "23:00"
-  max_concurrent_downloads: 2
+  time: "22:00"
+  max_concurrent_downloads: 1
+  time_window:
+    enabled: true
+    start_time: "22:00"
+    end_time: "07:00"
+    timezone: "local"
 ```
 
 ### Models Configuration
@@ -116,26 +122,11 @@ Each model in the `models` array supports the following fields:
 
 ##### Optional Fields
 
-- **`description`** (string): Model functionality description
-
-  - Purpose: Help users understand the model's use case
-  - Example: `"BART model for text summarization tasks"`
-
-- **`size_estimate`** (string): Estimated model size
-
-  - Format: Number + unit (KB, MB, GB)
-  - Purpose: Disk space planning and download time estimation
-  - Examples: `"1.6GB"`, `"440MB"`, `"1024KB"`
-
 - **`priority`** (string): Download priority level
 
   - Values: `"high"`, `"medium"` (default), `"low"`
-  - Purpose: Determines download order when concurrency limits apply
-
-- **`tags`** (array of strings): Classification tags
-  - Purpose: Model categorization, filtering, and bulk management
-  - Common tags: `"nlp"`, `"cv"`, `"summarization"`, `"translation"`, `"classification"`, `"generation"`
-  - Example: `["summarization", "nlp", "text-generation"]`
+  - Purpose: Determines download order - high priority models are downloaded first
+  - Implementation: Models are ordered by priority in the download queue
 
 #### Global Settings
 
@@ -183,28 +174,22 @@ The `metadata` object contains configuration file information:
 {
   "models": [
     {
-      "name": "facebook/bart-large-cnn",
-      "description": "BART model for text summarization tasks",
-      "size_estimate": "1.6GB",
+      "name": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
       "priority": "high",
-      "tags": ["summarization", "nlp", "text-generation"],
+      "status": "pending",
       "enabled": true
     },
     {
-      "name": "bert-base-uncased",
-      "description": "BERT base model, uncased version",
-      "size_estimate": "440MB",
+      "name": "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B",
       "priority": "medium",
-      "tags": ["classification", "nlp", "embeddings"],
+      "status": "pending",
       "enabled": true
     },
     {
-      "name": "gpt2",
-      "description": "GPT-2 language model",
-      "size_estimate": "545MB",
+      "name": "zai-org/GLM-4.5-Air-FP8",
       "priority": "low",
-      "tags": ["generation", "nlp", "text-generation"],
-      "enabled": false
+      "status": "pending",
+      "enabled": true
     }
   ],
   "settings": {
@@ -233,6 +218,48 @@ The `metadata` object contains configuration file information:
 8. **Cleanup Strategy**: Enable auto-cleanup for long-running operations
 
 ## CLI Commands
+
+### Time Window Management
+
+The downloader supports time window restrictions to limit downloads to specific time periods. This is useful for scheduling downloads during off-peak hours or to comply with network usage policies.
+
+#### Key Features
+- **Cross-midnight support**: Configure windows like 22:00-07:00 (next day)
+- **Validation**: Ensures proper time format (HH:MM) and logical consistency
+- **Real-time status**: Check if current time is within the configured window
+- **Flexible configuration**: Enable/disable per schedule with different time ranges
+
+#### Usage Examples
+
+```bash
+# Enable time window for a schedule (22:00 to 07:00 next day)
+uv run hf-downloader schedule time-window 1 --enable --start-time "22:00" --end-time "07:00"
+
+# Disable time window restrictions
+uv run hf-downloader schedule time-window 1 --disable
+
+# Check current time window status
+uv run hf-downloader schedule time-window-status 1
+
+# List all schedules (shows time window information)
+uv run hf-downloader schedule list
+```
+
+#### Time Window Status Output
+
+The `time-window-status` command provides detailed information:
+
+```
+Time Window Status for Schedule 1:
+  Enabled: Yes
+  Start Time: 22:00
+  End Time: 07:00
+  Currently Active: No
+  Next Window Start: 2025-09-24T22:00:00
+  Current Window End: None
+  Crosses Midnight: Yes
+  Duration Minutes: 540
+```
 
 ### Daemon Management
 
@@ -264,13 +291,16 @@ uv run hf-downloader models list --status pending
 uv run hf-downloader models list --status completed
 
 # Add new model
-uv run hf-downloader models add "bert-base-uncased" --description "BERT base model"
+uv run hf-downloader models add "bert-base-uncased" --priority "medium"
 
 # Remove model
 uv run hf-downloader models remove "bert-base-uncased"
 
 # Update model status
 uv run hf-downloader models update "bert-base-uncased" --status completed
+
+# Update model priority
+uv run hf-downloader models update "bert-base-uncased" --priority "high"
 ```
 
 ### Schedule Management
@@ -291,6 +321,13 @@ uv run hf-downloader schedule disable 1
 
 # Set active schedule
 uv run hf-downloader schedule set-active 1
+
+# Configure time window for a schedule
+uv run hf-downloader schedule time-window 1 --enable --start-time "22:00" --end-time "07:00"
+uv run hf-downloader schedule time-window 1 --disable
+
+# Check time window status
+uv run hf-downloader schedule time-window-status 1
 ```
 
 ### Configuration Management
@@ -493,6 +530,12 @@ HF_DOWNLOADER_FOREGROUND=false
 HF_DOWNLOADER_TIMEOUT=3600
 HF_DOWNLOADER_MAX_RETRIES=5
 HF_DOWNLOADER_CONCURRENT_DOWNLOADS=2
+
+# Time Window Configuration (nested under default_schedule)
+HF_DOWNLOADER_TIME_WINDOW_ENABLED=true
+HF_DOWNLOADER_TIME_WINDOW_START=22:00
+HF_DOWNLOADER_TIME_WINDOW_END=07:00
+HF_DOWNLOADER_TIME_WINDOW_TIMEZONE=local
 ```
 
 ### Configuration Examples

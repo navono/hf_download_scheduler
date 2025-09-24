@@ -483,6 +483,92 @@ def update_schedule(
         ctx.exit(1)
 
 
+@schedule.command("time-window")
+@click.argument("schedule_id", type=int)
+@click.option("--enable", is_flag=True, help="Enable time window restriction")
+@click.option("--disable", is_flag=True, help="Disable time window restriction")
+@click.option("--start-time", help="Start time in HH:MM format (e.g., 22:00)")
+@click.option("--end-time", help="End time in HH:MM format (e.g., 07:00)")
+@click.pass_context
+def time_window_schedule(ctx, schedule_id, enable, disable, start_time, end_time):
+    """Configure time window restrictions for a schedule."""
+    integration_service = ctx.obj["integration_service"]
+
+    # Validate options
+    if enable and disable:
+        click.echo("Error: Cannot specify both --enable and --disable", err=True)
+        ctx.exit(1)
+
+    if not enable and not disable:
+        click.echo("Error: Must specify either --enable or --disable", err=True)
+        ctx.exit(1)
+
+    if enable and (not start_time or not end_time):
+        click.echo(
+            "Error: --start-time and --end-time are required when enabling time window",
+            err=True,
+        )
+        ctx.exit(1)
+
+    # Build kwargs for time window update
+    kwargs = {
+        "time_window_enabled": enable,
+        "time_window_start": start_time if enable else None,
+        "time_window_end": end_time if enable else None,
+    }
+
+    result = integration_service.cli_integration.handle_schedule_time_window(
+        schedule_id, **kwargs
+    )
+    if result["status"] == "updated":
+        if enable:
+            click.echo(f"Time window enabled for schedule {schedule_id}")
+            click.echo(f"Window: {start_time} - {end_time}")
+        else:
+            click.echo(f"Time window disabled for schedule {schedule_id}")
+    else:
+        click.echo(
+            f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
+            err=True,
+        )
+        ctx.exit(1)
+
+
+@schedule.command("time-window-status")
+@click.argument("schedule_id", type=int)
+@click.pass_context
+def time_window_status(ctx, schedule_id):
+    """Show time window status for a schedule."""
+    integration_service = ctx.obj["integration_service"]
+
+    result = integration_service.cli_integration.handle_time_window_status(schedule_id)
+    if result["status"] == "success":
+        schedule = result["schedule"]
+        click.echo(f"Time Window Status for Schedule {schedule_id}:")
+        click.echo(f"  Enabled: {'Yes' if schedule.time_window_enabled else 'No'}")
+
+        if schedule.time_window_enabled:
+            click.echo(f"  Start Time: {schedule.time_window_start}")
+            click.echo(f"  End Time: {schedule.time_window_end}")
+            click.echo(
+                f"  Currently Active: {'Yes' if result['is_currently_active'] else 'No'}"
+            )
+            click.echo(
+                f"  Can Start Downloads: {'Yes' if result['can_start_downloads'] else 'No'}"
+            )
+
+            if result.get("next_window_start"):
+                click.echo(f"  Next Window Start: {result['next_window_start']}")
+            if result.get("current_window_end"):
+                click.echo(f"  Current Window End: {result['current_window_end']}")
+    else:
+        click.echo(
+            f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
+            err=True,
+        )
+        ctx.exit(1)
+
+
 @schedule.command("delete")
 @click.argument("schedule_id", type=int)
 @click.pass_context
@@ -765,17 +851,30 @@ def _format_schedules_output(schedules):
         return
 
     click.echo(
-        f"{'ID':<5} {'Name':<20} {'Type':<8} {'Time':<8} {'Day':<5} {'Enabled':<8} {'Concurrent':<10}"
+        f"{'ID':<5} {'Name':<20} {'Type':<8} {'Time':<8} {'Day':<5} {'Enabled':<8} {'Concurrent':<10} {'Time Window':<15}"
     )
-    click.echo("-" * 70)
+    click.echo("-" * 85)
 
     for schedule in schedules:
         day_str = (
             str(schedule.day_of_week) if schedule.day_of_week is not None else "N/A"
         )
         enabled_str = "Yes" if schedule.enabled else "No"
+
+        # Format time window information
+        if (
+            schedule.time_window_enabled
+            and schedule.time_window_start
+            and schedule.time_window_end
+        ):
+            tw_str = f"{schedule.time_window_start}-{schedule.time_window_end}"
+        elif schedule.time_window_enabled:
+            tw_str = "Enabled (incomplete)"
+        else:
+            tw_str = "Disabled"
+
         click.echo(
-            f"{schedule.id:<5} {schedule.name:<20} {schedule.type:<8} {schedule.time:<8} {day_str:<5} {enabled_str:<8} {schedule.max_concurrent_downloads:<10}"
+            f"{schedule.id:<5} {schedule.name:<20} {schedule.type:<8} {schedule.time:<8} {day_str:<5} {enabled_str:<8} {schedule.max_concurrent_downloads:<10} {tw_str:<15}"
         )
 
 

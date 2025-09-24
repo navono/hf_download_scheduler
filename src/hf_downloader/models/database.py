@@ -20,11 +20,22 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    case,
     create_engine,
 )
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
 Base = declarative_base()
+
+
+def get_priority_order(priority_str: str) -> int:
+    """Convert priority string to numeric order for sorting."""
+    priority_map = {
+        "high": 1,
+        "medium": 2,
+        "low": 3,
+    }
+    return priority_map.get(priority_str.lower(), 2)  # Default to medium
 
 
 class Model(Base):
@@ -87,6 +98,12 @@ class ScheduleConfiguration(Base):
     day_of_week = Column(Integer, nullable=True)
     enabled = Column(Boolean, default=True)
     max_concurrent_downloads = Column(Integer, default=1)
+
+    # Time window fields for download scheduling restrictions
+    time_window_enabled = Column(Boolean, default=False)
+    time_window_start = Column(String(5), nullable=True)  # HH:MM format
+    time_window_end = Column(String(5), nullable=True)  # HH:MM format
+
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime,
@@ -110,6 +127,9 @@ class ScheduleConfiguration(Base):
             "day_of_week": self.day_of_week,
             "enabled": self.enabled,
             "max_concurrent_downloads": self.max_concurrent_downloads,
+            "time_window_enabled": self.time_window_enabled,
+            "time_window_start": self.time_window_start,
+            "time_window_end": self.time_window_end,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -249,6 +269,25 @@ class DatabaseManager:
         self._create_tables()
         logger.info("DatabaseManager initialized successfully")
 
+    def _validate_time_format(self, time_str: str):
+        """Validate time format is HH:MM."""
+        if not time_str:
+            return
+
+        try:
+            hours, minutes = time_str.split(":")
+            hours = int(hours)
+            minutes = int(minutes)
+
+            if hours < 0 or hours > 23:
+                raise ValueError(f"Hour must be between 00-23, got {hours}")
+            if minutes < 0 or minutes > 59:
+                raise ValueError(f"Minute must be between 00-59, got {minutes}")
+        except ValueError as e:
+            if "invalid literal" in str(e):
+                raise ValueError(f"Invalid time format: {time_str}. Use HH:MM format")
+            raise
+
     def _create_tables(self):
         """Create database tables."""
         Base.metadata.create_all(bind=self.engine)
@@ -368,9 +407,20 @@ class DatabaseManager:
             return True
 
     def get_models_by_status(self, status: str) -> list[Model]:
-        """Get all models with specified status."""
+        """Get all models with specified status, ordered by priority."""
         with self.get_session() as session:
-            return session.query(Model).filter(Model.status == status).all()
+            # Create CASE expression for priority ordering
+            priority_order = case(
+                (Model.model_metadata.like('%"priority": "high"%'), 1),
+                (Model.model_metadata.like('%"priority": "medium"%'), 2),
+                (Model.model_metadata.like('%"priority": "low"%'), 3),
+                else_=2  # Default to medium priority
+            )
+
+            return session.query(Model)\
+                .filter(Model.status == status)\
+                .order_by(priority_order, Model.created_at)\
+                .all()
 
     def get_all_models(self) -> list[Model]:
         """Get all models from database."""
@@ -385,6 +435,9 @@ class DatabaseManager:
         time: str,
         day_of_week: int | None = None,
         max_concurrent_downloads: int = 1,
+        time_window_enabled: bool = False,
+        time_window_start: str | None = None,
+        time_window_end: str | None = None,
     ) -> ScheduleConfiguration:
         """Create a new schedule configuration."""
         with self.get_session() as session:
@@ -394,7 +447,19 @@ class DatabaseManager:
                 time=time,
                 day_of_week=day_of_week,
                 max_concurrent_downloads=max_concurrent_downloads,
+                time_window_enabled=time_window_enabled,
+                time_window_start=time_window_start,
+                time_window_end=time_window_end,
             )
+            # Validate time window configuration
+            if time_window_enabled:
+                if not time_window_start or not time_window_end:
+                    raise ValueError(
+                        "Both time_window_start and time_window_end must be specified when time_window_enabled is True"
+                    )
+                self._validate_time_format(time_window_start)
+                self._validate_time_format(time_window_end)
+
             session.add(schedule)
             session.commit()
             session.refresh(schedule)
@@ -470,6 +535,9 @@ class DatabaseManager:
         day_of_week: int | None = None,
         max_concurrent_downloads: int | None = None,
         enabled: bool | None = None,
+        time_window_enabled: bool | None = None,
+        time_window_start: str | None = None,
+        time_window_end: str | None = None,
     ) -> ScheduleConfiguration | None:
         """Update schedule configuration."""
         with self.get_session() as session:
@@ -493,6 +561,21 @@ class DatabaseManager:
                 schedule.max_concurrent_downloads = max_concurrent_downloads
             if enabled is not None:
                 schedule.enabled = enabled
+            if time_window_enabled is not None:
+                schedule.time_window_enabled = time_window_enabled
+            if time_window_start is not None:
+                schedule.time_window_start = time_window_start
+            if time_window_end is not None:
+                schedule.time_window_end = time_window_end
+
+            # Validate time window configuration
+            if schedule.time_window_enabled:
+                if not schedule.time_window_start or not schedule.time_window_end:
+                    raise ValueError(
+                        "Both time_window_start and time_window_end must be specified when time_window_enabled is True"
+                    )
+                self._validate_time_format(schedule.time_window_start)
+                self._validate_time_format(schedule.time_window_end)
 
             schedule.updated_at = datetime.now(UTC)
             session.commit()
@@ -804,6 +887,88 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error creating retry session: {e}")
             return None
+
+    # Time window operations
+    def get_schedules_with_time_window(
+        self, enabled_only: bool = True
+    ) -> list[ScheduleConfiguration]:
+        """Get schedules that have time window enabled."""
+        with self.get_session() as session:
+            query = session.query(ScheduleConfiguration)
+            if enabled_only:
+                query = query.filter(ScheduleConfiguration.enabled)
+            return query.filter(ScheduleConfiguration.time_window_enabled).all()
+
+    def get_schedules_in_time_window(self) -> list[ScheduleConfiguration]:
+        """Get schedules that are currently in their time window."""
+        from ..services.time_window import TimeWindow
+
+        schedules_in_window = []
+
+        with self.get_session() as session:
+            schedules = (
+                session.query(ScheduleConfiguration)
+                .filter(
+                    ScheduleConfiguration.enabled,
+                    ScheduleConfiguration.time_window_enabled,
+                )
+                .all()
+            )
+
+            for schedule in schedules:
+                if schedule.time_window_start and schedule.time_window_end:
+                    time_window = TimeWindow(
+                        schedule.time_window_start,
+                        schedule.time_window_end,
+                        enabled=True,
+                    )
+                    if time_window.is_current_time_in_window():
+                        schedules_in_window.append(schedule)
+
+        return schedules_in_window
+
+    def get_time_window_status(self, schedule_id: int) -> dict[str, Any]:
+        """Get time window status for a specific schedule."""
+        from ..services.time_window import TimeWindow
+
+        with self.get_session() as session:
+            schedule = (
+                session.query(ScheduleConfiguration)
+                .filter(ScheduleConfiguration.id == schedule_id)
+                .first()
+            )
+
+            if not schedule:
+                return {"error": "Schedule not found"}
+
+            if not schedule.time_window_enabled:
+                return {
+                    "enabled": False,
+                    "message": "Time window is disabled for this schedule",
+                }
+
+            if not schedule.time_window_start or not schedule.time_window_end:
+                return {
+                    "enabled": False,
+                    "message": "Time window configuration is incomplete",
+                }
+
+            time_window = TimeWindow(
+                schedule.time_window_start, schedule.time_window_end, enabled=True
+            )
+
+            return {
+                "enabled": True,
+                "start_time": schedule.time_window_start,
+                "end_time": schedule.time_window_end,
+                "is_currently_active": time_window.is_current_time_in_window(),
+                "next_window_start": time_window.get_next_window_start().isoformat(),
+                "current_window_end": time_window.get_window_end().isoformat()
+                if time_window.get_window_end()
+                else None,
+                "crosses_midnight": time_window._crosses_midnight(),
+                "duration_minutes": time_window.get_window_duration_minutes(),
+            }
 
     # System configuration operations
     def get_system_config(self, key: str, default: str | None = None) -> str | None:

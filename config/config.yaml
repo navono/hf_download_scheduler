@@ -33,6 +33,7 @@ log:
 monitoring:
   health_check_interval: 60  # Health check interval in seconds (default: 60 = 1 minute)
   models_check_interval: 10  # Models file check interval in seconds (default: 10 seconds)
+  status_sync_interval: 30   # Status sync interval in seconds (default: 30 seconds)
   watchdog_enabled: true     # Enable daemon watchdog monitoring
   watchdog_interval: 30      # Watchdog check interval in seconds (default: 30 seconds)
   auto_restart: true         # Automatically restart daemon if it crashes
@@ -51,3 +52,8 @@ default_schedule:
   type: daily
   time: "22:00"
   max_concurrent_downloads: 1
+  time_window:
+    enabled: true
+    start_time: "22:00"
+    end_time: "07:00"
+    timezone: "local"

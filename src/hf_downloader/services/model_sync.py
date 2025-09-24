@@ -83,6 +83,8 @@ class ModelSyncService:
         """
         Synchronize models from JSON to database.
         Creates new models in database if they don't exist.
+        Updates existing models if they are in pending state or if JSON provides new metadata.
+        Database status takes precedence for non-pending models.
         """
         try:
             json_models = self.load_models_from_json()
@@ -109,10 +111,7 @@ class ModelSyncService:
                         status = json_model.get("status", "pending")
                         metadata = {
                             "source": "json_config",
-                            "description": json_model.get("description", ""),
-                            "size_estimate": json_model.get("size_estimate", ""),
                             "priority": json_model.get("priority", "medium"),
-                            "tags": json_model.get("tags", []),
                         }
 
                         # Filter out None values from metadata
@@ -138,6 +137,7 @@ class ModelSyncService:
                     else:
                         # 模型已存在，检查是否需要更新
                         json_status = json_model.get("status", "pending")
+                        db_status = db_model.status
 
                         # 如果 JSON 中的 status 为空，使用数据库中的状态
                         if not json_model.get("status"):
@@ -146,22 +146,21 @@ class ModelSyncService:
                                 {
                                     "model": model_name,
                                     "action": "skipped",
-                                    "db_status": db_model.status,
+                                    "db_status": db_status,
                                     "json_status": "pending",
                                 }
                             )
                             logger.debug(
                                 f"Model exists with empty status, using DB status: {model_name}"
                             )
-                        # 如果 JSON 中的状态为 pending，则更新模型信息
-                        elif json_model.get("status") == "pending":
+                        # 如果数据库中的状态是 pending、failed 或 completed，可以重置为 pending 进行重新下载
+                        elif db_status in ["pending", "failed"] or json_model.get(
+                            "force_reset", False
+                        ):
                             # 更新模型元数据
                             metadata = {
                                 "source": "json_config",
-                                "description": json_model.get("description", ""),
-                                "size_estimate": json_model.get("size_estimate", ""),
                                 "priority": json_model.get("priority", "medium"),
-                                "tags": json_model.get("tags", []),
                             }
 
                             # 过滤掉空值
@@ -171,10 +170,10 @@ class ModelSyncService:
                                 if v is not None and v != ""
                             }
 
-                            # 更新模型信息，强制设置状态为 pending
+                            # 更新模型信息，设置状态为 pending
                             self.db_manager.update_model(
                                 db_model.id,
-                                status="pending",  # 强制设置为 pending
+                                status="pending",
                                 metadata=metadata,
                             )
 
@@ -183,28 +182,41 @@ class ModelSyncService:
                                 {
                                     "model": model_name,
                                     "action": "updated",
-                                    "db_status": db_model.status,
+                                    "db_status": db_status,
                                     "json_status": json_status,
                                 }
                             )
 
                             logger.info(
-                                f"Updated model in DB: {model_name} with metadata from JSON"
+                                f"Reset model {model_name} to pending with updated metadata"
                             )
-                        else:
-                            # 模型存在且不是 pending 状态，数据库状态优先
+                        # 如果模型正在下载中或已完成，保持数据库状态
+                        elif db_status in ["downloading", "completed"]:
                             sync_results["skipped"] += 1
                             sync_results["details"].append(
                                 {
                                     "model": model_name,
                                     "action": "skipped",
-                                    "db_status": db_model.status,
+                                    "db_status": db_status,
                                     "json_status": json_status,
                                 }
                             )
-
                             logger.debug(
-                                f"Model exists with non-pending status, skipping: {model_name}"
+                                f"Model {model_name} is {db_status}, keeping DB status"
+                            )
+                        else:
+                            # 其他情况，数据库状态优先
+                            sync_results["skipped"] += 1
+                            sync_results["details"].append(
+                                {
+                                    "model": model_name,
+                                    "action": "skipped",
+                                    "db_status": db_status,
+                                    "json_status": json_status,
+                                }
+                            )
+                            logger.debug(
+                                f"Model exists, DB status takes precedence: {model_name}"
                             )
 
                 except Exception as e:
@@ -357,6 +369,174 @@ class ModelSyncService:
         except Exception as e:
             logger.error(f"Error updating model status in JSON: {e}")
             return False
+
+    def sync_db_status_to_json(self) -> dict[str, Any]:
+        """
+        Synchronize database model status back to JSON file.
+        This updates the JSON status to match the database status.
+        """
+        try:
+            json_models = self.load_models_from_json()
+            db_models = self.db_manager.get_all_models()
+
+            # Create mapping of model name to database status
+            db_status_map = {model.name: model.status for model in db_models}
+
+            sync_results = {
+                "total_models": len(json_models),
+                "updated": 0,
+                "unchanged": 0,
+                "errors": [],
+                "details": [],
+            }
+
+            updated_models = []
+
+            for json_model in json_models:
+                model_name = json_model.get("name")
+                if not model_name:
+                    continue
+
+                try:
+                    db_status = db_status_map.get(model_name)
+                    json_status = json_model.get("status", "pending")
+
+                    if db_status and db_status != json_status:
+                        # Update JSON status to match DB status
+                        json_model["status"] = db_status
+                        sync_results["updated"] += 1
+                        sync_results["details"].append(
+                            {
+                                "model": model_name,
+                                "old_status": json_status,
+                                "new_status": db_status,
+                                "source": "database",
+                            }
+                        )
+
+                        logger.info(
+                            f"Updated JSON status for {model_name}: {json_status} -> {db_status}"
+                        )
+                    else:
+                        sync_results["unchanged"] += 1
+
+                    updated_models.append(json_model)
+
+                except Exception as e:
+                    error_msg = f"Error syncing model {model_name}: {str(e)}"
+                    sync_results["errors"].append(error_msg)
+                    logger.error(error_msg)
+
+            # Save updated models back to JSON
+            if sync_results["updated"] > 0:
+                self.save_models_to_json(updated_models)
+                logger.info(f"Updated {sync_results['updated']} model statuses in JSON")
+
+            return sync_results
+
+        except Exception as e:
+            logger.error(f"Error during sync from DB to JSON: {e}")
+            return {
+                "total_models": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "errors": [str(e)],
+                "details": [],
+            }
+
+    def sync_status_changes_only(self) -> dict[str, Any]:
+        """
+        只同步状态变化，不改变模型的其他配置。
+        专门用于下载过程中的状态同步。
+        """
+        try:
+            json_models = self.load_models_from_json()
+            db_models = self.db_manager.get_all_models()
+
+            # Create mapping of model name to database status and metadata
+            db_info_map = {}
+            for model in db_models:
+                db_info_map[model.name] = {
+                    "status": model.status,
+                    "download_path": model.download_path,
+                    "updated_at": model.updated_at,
+                }
+
+            sync_results = {
+                "total_models": len(json_models),
+                "updated": 0,
+                "unchanged": 0,
+                "errors": [],
+                "details": [],
+            }
+
+            updated_models = []
+
+            for json_model in json_models:
+                model_name = json_model.get("name")
+                if not model_name:
+                    continue
+
+                try:
+                    db_info = db_info_map.get(model_name)
+                    if not db_info:
+                        continue
+
+                    json_status = json_model.get("status", "pending")
+                    db_status = db_info["status"]
+
+                    # 只在状态不同时更新
+                    if db_status != json_status:
+                        old_status = json_model["status"]
+                        json_model["status"] = db_status
+
+                        # 添加下载路径信息
+                        if db_info["download_path"] and not json_model.get(
+                            "download_path"
+                        ):
+                            json_model["download_path"] = db_info["download_path"]
+
+                        sync_results["updated"] += 1
+                        sync_results["details"].append(
+                            {
+                                "model": model_name,
+                                "old_status": old_status,
+                                "new_status": db_status,
+                                "sync_type": "status_only",
+                            }
+                        )
+
+                        logger.debug(
+                            f"Status sync: {model_name} {old_status} -> {db_status}"
+                        )
+                    else:
+                        sync_results["unchanged"] += 1
+
+                    updated_models.append(json_model)
+
+                except Exception as e:
+                    error_msg = f"Error syncing status for {model_name}: {str(e)}"
+                    sync_results["errors"].append(error_msg)
+                    logger.error(error_msg)
+
+            # 只在有更新时保存
+            if sync_results["updated"] > 0:
+                self.save_models_to_json(updated_models)
+                logger.info(
+                    f"Status sync completed: {sync_results['updated']} models updated"
+                )
+
+            return sync_results
+
+        except Exception as e:
+            logger.error(f"Error during status-only sync: {e}")
+            return {
+                "total_models": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "errors": [str(e)],
+                "details": [],
+            }
 
     def full_sync(self) -> dict[str, Any]:
         """Perform full synchronization between JSON and database."""
