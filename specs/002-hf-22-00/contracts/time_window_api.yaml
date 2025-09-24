@@ -1,0 +1,275 @@
+openapi: 3.0.0
+info:
+  title: HF Downloader Time Window API
+  description: API contracts for time window download scheduling feature
+  version: 1.0.0
+  contact:
+    name: HF Downloader Team
+
+paths:
+  /api/v1/schedules/{schedule_id}/time-window:
+    get:
+      summary: Get time window configuration for a schedule
+      operationId: getTimeWindowConfig
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Schedule ID
+      responses:
+        '200':
+          description: Time window configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeWindowConfig'
+        '404':
+          description: Schedule not found
+        '500':
+          description: Internal server error
+
+    put:
+      summary: Update time window configuration for a schedule
+      operationId: updateTimeWindowConfig
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Schedule ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeWindowUpdateRequest'
+      responses:
+        '200':
+          description: Time window configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeWindowConfig'
+        '400':
+          description: Invalid time format or configuration
+        '404':
+          description: Schedule not found
+        '500':
+          description: Internal server error
+
+    delete:
+      summary: Disable time window for a schedule
+      operationId: disableTimeWindow
+      parameters:
+        - name: schedule_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Schedule ID
+      responses:
+        '200':
+          description: Time window disabled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "disabled"
+                  message:
+                    type: string
+                    example: "Time window disabled for schedule 1"
+        '404':
+          description: Schedule not found
+        '500':
+          description: Internal server error
+
+  /api/v1/time-window/status:
+    get:
+      summary: Get current time window status for all schedules
+      operationId: getTimeWindowStatus
+      responses:
+        '200':
+          description: Current time window status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_time:
+                    type: string
+                    format: date-time
+                    example: "2025-09-24T23:30:00Z"
+                  schedules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScheduleTimeStatus'
+        '500':
+          description: Internal server error
+
+  /api/v1/time-window/validate:
+    post:
+      summary: Validate time window configuration
+      operationId: validateTimeWindow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimeWindowValidationRequest'
+      responses:
+        '200':
+          description: Time window validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeWindowValidationResponse'
+        '400':
+          description: Invalid request format
+        '500':
+          description: Internal server error
+
+components:
+  schemas:
+    TimeWindowConfig:
+      type: object
+      properties:
+        schedule_id:
+          type: integer
+          example: 1
+        enabled:
+          type: boolean
+          example: true
+        start_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          example: "22:00"
+        end_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          example: "07:00"
+        current_status:
+          type: object
+          properties:
+            is_in_window:
+              type: boolean
+              example: true
+            window_start_today:
+              type: string
+              format: date-time
+              nullable: true
+            window_end_today:
+              type: string
+              format: date-time
+              nullable: true
+            next_window_start:
+              type: string
+              format: date-time
+              nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TimeWindowUpdateRequest:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: Enable or disable time window restrictions
+        start_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          description: Start time in HH:MM format (required if enabled=true)
+        end_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          description: End time in HH:MM format (required if enabled=true)
+
+    TimeWindowValidationRequest:
+      type: object
+      required:
+        - start_time
+        - end_time
+      properties:
+        start_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          example: "22:00"
+        end_time:
+          type: string
+          pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+          example: "07:00"
+
+    TimeWindowValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        crosses_midnight:
+          type: boolean
+        window_duration_minutes:
+          type: integer
+          description: Duration of time window in minutes
+
+    ScheduleTimeStatus:
+      type: object
+      properties:
+        schedule_id:
+          type: integer
+        schedule_name:
+          type: string
+        time_window_enabled:
+          type: boolean
+        start_time:
+          type: string
+          nullable: true
+        end_time:
+          type: string
+          nullable: true
+        is_currently_active:
+          type: boolean
+        can_start_downloads:
+          type: boolean
+        active_downloads_count:
+          type: integer
+          minimum: 0
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - BearerAuth: []
