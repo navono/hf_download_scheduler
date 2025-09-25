@@ -1,22 +1,40 @@
 {
   "models": [
     {
-      "name": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+      "name": "moondream/moondream3-preview",
+      "priority": "high",
+      "status": "failed",
+      "enabled": true
+    },
+    {
+      "name": "Wan-AI/Wan2.2-Animate-14B",
       "priority": "high",
       "status": "pending",
       "enabled": true
     },
     {
+      "name": "Qwen/Qwen-Image-Edit-2509",
+      "priority": "high",
+      "status": "pending",
+      "enabled": true
+    },
+    {
+      "name": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+      "priority": "high",
+      "status": "completed",
+      "enabled": true
+    },
+    {
       "name": "Alibaba-NLP/Tongyi-DeepResearch-30B-A3B",
       "priority": "medium",
-      "status": "pending",
+      "status": "completed",
       "enabled": true
     },
     {
       "name": "zai-org/GLM-4.5-Air-FP8",
       "priority": "low",
-      "status": "pending",
-      "enabled": true
+      "status": "completed",
+      "enabled": false
     }
   ],
   "settings": {
@@ -28,6 +46,6 @@
   "metadata": {
     "version": "1.0",
     "created": "2025-01-01T00:00:00Z",
-    "last_updated": "2025-09-24T00:14:10.725967+00:00"
+    "last_updated": "2025-09-25T23:43:26.913246+00:00"
   }
 }

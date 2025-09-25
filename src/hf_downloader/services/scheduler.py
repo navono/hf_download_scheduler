@@ -358,7 +358,7 @@ class SchedulerService:
                 f"Scheduled download will process the following {len(pending_models)} models:"
             )
             for i, model in enumerate(pending_models, 1):
-                logger.info(f"  {i}. {model.name}")
+                logger.info(f"  {i}. {model['name']}")
 
             # Limit concurrent downloads
             max_downloads = min(
@@ -370,14 +370,14 @@ class SchedulerService:
             for i, model in enumerate(pending_models[:max_downloads]):
                 try:
                     logger.info(
-                        f"Starting download {i + 1}/{max_downloads}: {model.name}"
+                        f"Starting download {i + 1}/{max_downloads}: {model['name']}"
                     )
                     result = self.downloader_service.download_model(
-                        model.name, schedule_id=schedule_id
+                        model["name"], schedule_id=schedule_id
                     )
-                    logger.info(f"Started download for {model.name}: {result}")
+                    logger.info(f"Started download for {model['name']}: {result}")
                 except Exception as e:
-                    logger.error(f"Error starting download for {model.name}: {e}")
+                    logger.error(f"Error starting download for {model['name']}: {e}")
 
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -514,7 +514,7 @@ class SchedulerService:
             # Fallback to old method (doesn't check enabled field)
             logger.debug("Integration service not available, using fallback method")
             pending_models = self.db_manager.get_models_by_status("pending")
-            logger.debug(f"Found {len(pending_models)} pending models")
+            logger.debug(f"Found {len(pending_models)} pending models in database")
 
             # Convert to list of dictionaries for easier handling
             result = []
@@ -529,8 +529,14 @@ class SchedulerService:
                 metadata = model.get_metadata()
                 if metadata:
                     model_dict["priority"] = metadata.get("priority", "medium")
+                    # Check if model is enabled via metadata (if available)
+                    if metadata.get("enabled", True) is False:
+                        logger.debug(f"Model {model.name} is disabled in metadata, excluding from download queue")
+                        continue
 
                 result.append(model_dict)
+
+            logger.info(f"Found {len(result)} pending models for download (fallback method)")
 
             return result
         except Exception as e:

@@ -8,7 +8,7 @@ with proper error handling, logging, and monitoring capabilities.
 import os
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Lock, Thread
 from typing import Any
 
@@ -552,9 +552,38 @@ class IntegrationService:
     def get_enabled_pending_models(self) -> list[dict[str, Any]]:
         """Get list of enabled pending models that will be downloaded on next run."""
         try:
+            # Get config to check if failed model retry is enabled
+            config = self.service_container.config
+
             # Get models with pending status from database
             pending_models = self.service_container.db_manager.get_models_by_status("pending")
             logger.debug(f"Found {len(pending_models)} pending models in database")
+
+            # If retry is enabled, also get failed models that should be retried
+            failed_models_to_retry = []
+            if config.retry_failed_models:
+                failed_models = self.service_container.db_manager.get_models_by_status("failed")
+                logger.debug(f"Found {len(failed_models)} failed models in database")
+
+                current_time = datetime.now()
+                for model in failed_models:
+                    # Check if failed model should be retried
+                    metadata = model.get_metadata() or {}
+                    retry_count = metadata.get("retry_count", 0)
+                    last_failed_at = metadata.get("last_failed_at")
+
+                    # Reset retry count if enough time has passed
+                    if (last_failed_at and
+                        current_time - datetime.fromisoformat(last_failed_at) >
+                        timedelta(hours=config.retry_reset_hours)):
+                        retry_count = 0
+
+                    # Add to retry queue if under max retries
+                    if retry_count < config.max_failed_retries:
+                        failed_models_to_retry.append(model)
+                        logger.debug(f"Model {model.name} added to retry queue (attempt {retry_count + 1}/{config.max_failed_retries})")
+                    else:
+                        logger.debug(f"Model {model.name} exceeded max retries ({retry_count}/{config.max_failed_retries}), skipping")
 
             # Get models from JSON to check enabled status
             json_models = self.model_sync_service.load_models_from_json()
@@ -563,9 +592,12 @@ class IntegrationService:
                 if model.get("enabled", True)  # Default to True if enabled field is missing
             }
 
+            # Combine pending models and failed models for retry
+            all_models = pending_models + failed_models_to_retry
+
             # Filter to only include enabled models
             enabled_pending_models = []
-            for model in pending_models:
+            for model in all_models:
                 if model.name in enabled_model_names:
                     model_dict = {
                         "id": model.id,
@@ -573,9 +605,14 @@ class IntegrationService:
                         "status": model.status,
                     }
                     # Add metadata if available
-                    metadata = model.get_metadata()
-                    if metadata:
-                        model_dict["priority"] = metadata.get("priority", "medium")
+                    metadata = model.get_metadata() or {}
+                    model_dict["priority"] = metadata.get("priority", "medium")
+
+                    # For failed models, add retry info
+                    if model.status == "failed":
+                        retry_count = metadata.get("retry_count", 0)
+                        model_dict["retry_attempt"] = retry_count + 1
+                        model_dict["max_retries"] = config.max_failed_retries
 
                     enabled_pending_models.append(model_dict)
                 else:

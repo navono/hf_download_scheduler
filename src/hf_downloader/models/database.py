@@ -342,7 +342,7 @@ class DatabaseManager:
 
             # Validate status transition
             valid_transitions = {
-                "pending": ["downloading"],
+                "pending": ["downloading", "completed"],  # Allow direct -> completed for probing
                 "downloading": ["completed", "failed"],
                 "failed": ["pending"],  # retry
                 "completed": [],  # terminal state

@@ -7,6 +7,11 @@ timeout_seconds: 3600
 concurrent_downloads: 1
 foreground: false
 
+# Failed model retry settings
+retry_failed_models: true
+max_failed_retries: 3
+retry_reset_hours: 24
+
 # File paths
 database_path: ./hf_downloader.db
 pid_file: ./hf_downloader.pid
@@ -50,10 +55,10 @@ monitoring:
 default_schedule:
   enabled: true
   type: daily
-  time: "22:00"
+  time: "7:42"
   max_concurrent_downloads: 1
   time_window:
-    enabled: true
+    enabled: false
     start_time: "22:00"
     end_time: "07:00"
     timezone: "local"

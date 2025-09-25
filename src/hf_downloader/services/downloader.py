@@ -72,6 +72,28 @@ class DownloaderService:
         except Exception as e:
             logger.error(f"Error syncing model status for {model_name}: {e}")
 
+    def _update_model_retry_count(self, model_name: str, model_id: int):
+        """Update retry count for failed model."""
+        try:
+            # Get current retry count from model metadata
+            model = self.db_manager.get_model_by_id(model_id)
+            if not model:
+                return
+
+            metadata = model.get_metadata() or {}
+            retry_count = metadata.get("retry_count", 0)
+
+            # Update retry count and timestamp
+            metadata["retry_count"] = retry_count + 1
+            metadata["last_failed_at"] = datetime.now().isoformat()
+
+            # Save updated metadata
+            self.db_manager.update_model_metadata(model_id, metadata)
+            logger.info(f"Updated retry count for {model_name}: {retry_count + 1}/{self.config.max_failed_retries}")
+
+        except Exception as e:
+            logger.error(f"Error updating retry count for {model_name}: {e}")
+
         # Create download directory if it doesn't exist
         if self.config.download_directory:
             Path(self.config.download_directory).mkdir(parents=True, exist_ok=True)
@@ -273,6 +295,10 @@ class DownloaderService:
                     session_id, "cancelled", error_message=str(e)
                 )
 
+                # Update retry count for failed downloads
+                if self.config.retry_failed_models:
+                    self._update_model_retry_count(model_name, model_id)
+
                 # 立即同步状态到JSON
                 self._sync_model_status_immediate(model_name, "failed")
             except Exception as db_error:
@@ -292,6 +318,10 @@ class DownloaderService:
                 self.db_manager.update_download_session(
                     session_id, "failed", error_message=str(e)
                 )
+
+                # Update retry count for failed downloads
+                if self.config.retry_failed_models:
+                    self._update_model_retry_count(model_name, model_id)
 
                 # 立即同步状态到JSON
                 self._sync_model_status_immediate(model_name, "failed")

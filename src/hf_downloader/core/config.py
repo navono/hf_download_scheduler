@@ -30,6 +30,11 @@ class Config:
     # Hugging Face specific
     hf_token: str | None = field(default_factory=lambda: os.getenv("HF_TOKEN"))
 
+    # Failed model retry settings
+    retry_failed_models: bool = True
+    max_failed_retries: int = 3
+    retry_reset_hours: int = 24
+
     # Logging - all logging config is under log field
     log: dict[str, Any] = field(
         default_factory=lambda: {
@@ -83,6 +88,12 @@ class Config:
             config.log_level = os.getenv("HF_DOWNLOADER_LOG_LEVEL")
         if os.getenv("HF_DOWNLOADER_MAX_RETRIES"):
             config.max_retries = int(os.getenv("HF_DOWNLOADER_MAX_RETRIES"))
+        if os.getenv("HF_DOWNLOADER_RETRY_FAILED_MODELS"):
+            config.retry_failed_models = os.getenv("HF_DOWNLOADER_RETRY_FAILED_MODELS").lower() in ("true", "1", "yes")
+        if os.getenv("HF_DOWNLOADER_MAX_FAILED_RETRIES"):
+            config.max_failed_retries = int(os.getenv("HF_DOWNLOADER_MAX_FAILED_RETRIES"))
+        if os.getenv("HF_DOWNLOADER_RETRY_RESET_HOURS"):
+            config.retry_reset_hours = int(os.getenv("HF_DOWNLOADER_RETRY_RESET_HOURS"))
         if os.getenv("HF_DOWNLOADER_TIMEOUT"):
             config.timeout_seconds = int(os.getenv("HF_DOWNLOADER_TIMEOUT"))
         if os.getenv("HF_DOWNLOADER_DB_PATH"):
@@ -158,6 +169,10 @@ class Config:
 
         if self.max_retries < 0:
             errors.append("max_retries must be non-negative")
+        if self.retry_failed_models and self.max_failed_retries < 0:
+            errors.append("max_failed_retries must be non-negative when retry_failed_models is enabled")
+        if self.retry_failed_models and self.retry_reset_hours <= 0:
+            errors.append("retry_reset_hours must be positive when retry_failed_models is enabled")
 
         if self.timeout_seconds <= 0:
             errors.append("timeout_seconds must be positive")

@@ -12,15 +12,17 @@ from typing import Any
 from loguru import logger
 
 from ..models.database import DatabaseManager
+from .model_probe import ModelProbeService, ModelProbeResult
 
 
 class ModelSyncService:
     """Service for synchronizing model status between JSON and database."""
 
-    def __init__(self, db_manager: DatabaseManager, models_file_path: str):
+    def __init__(self, db_manager: DatabaseManager, models_file_path: str, download_directory: str = None):
         """Initialize model sync service."""
         self.db_manager = db_manager
         self.models_file_path = models_file_path
+        self.model_probe_service = ModelProbeService(download_directory)
 
     def load_models_from_json(self) -> list[dict[str, Any]]:
         """Load models configuration from JSON file."""
@@ -519,3 +521,178 @@ class ModelSyncService:
                 "success": False,
                 "error": str(e),
             }
+
+    def probe_and_sync_pending_models(self, timeout: int = 5) -> dict[str, Any]:
+        """
+        Probe all pending models and update their status based on actual download state.
+
+        Args:
+            timeout: Probe timeout per model in seconds
+
+        Returns:
+            Dictionary with probe results and sync status
+        """
+        logger.info("Starting probe and sync for pending models")
+
+        try:
+            # Get all pending models from database
+            pending_models = self.db_manager.get_models_by_status("pending")
+            if not pending_models:
+                logger.info("No pending models to probe")
+                return {
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "total_models": 0,
+                    "probed_models": 0,
+                    "status_updates": 0,
+                    "results": {}
+                }
+
+            logger.info(f"Probing {len(pending_models)} pending models")
+            model_names = [model.name for model in pending_models]
+
+            # Probe all models in batch
+            probe_results = self.model_probe_service.probe_models_batch(model_names, timeout)
+
+            # Update status for models that are found locally
+            status_updates = 0
+            updated_models = []
+
+            for model_name, result in probe_results.items():
+                if result.status == "exists_locally":
+                    logger.info(f"Updating model {model_name} status to 'completed' (found locally)")
+
+                    # Update database status
+                    db_model = next((m for m in pending_models if m.name == model_name), None)
+                    if db_model:
+                        self.db_manager.update_model_status(db_model.id, "completed")
+                        status_updates += 1
+                        updated_models.append({
+                            "name": model_name,
+                            "old_status": "pending",
+                            "new_status": "completed",
+                            "details": result.details
+                        })
+
+                        # Update JSON file status as well
+                        self._update_model_status_in_json(model_name, "completed")
+
+                elif result.status == "not_found":
+                    logger.warning(f"Model {model_name} not found on Hugging Face, marking as error")
+
+                    # Update database status to error
+                    db_model = next((m for m in pending_models if m.name == model_name), None)
+                    if db_model:
+                        self.db_manager.update_model_status(db_model.id, "error")
+                        status_updates += 1
+                        updated_models.append({
+                            "name": model_name,
+                            "old_status": "pending",
+                            "new_status": "error",
+                            "reason": "Model not found on Hugging Face"
+                        })
+
+                        # Update JSON file status as well
+                        self._update_model_status_in_json(model_name, "error")
+
+            # Get summary statistics
+            summary = self.model_probe_service.get_status_summary(probe_results)
+
+            result = {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "total_models": len(pending_models),
+                "probed_models": len(probe_results),
+                "status_updates": status_updates,
+                "updated_models": updated_models,
+                "probe_summary": summary,
+                "results": {name: result.to_dict() for name, result in probe_results.items()}
+            }
+
+            logger.info(f"Probe and sync completed: {status_updates} status updates")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error during probe and sync: {e}")
+            return {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "success": False,
+                "error": str(e),
+            }
+
+    def _update_model_status_in_json(self, model_name: str, new_status: str) -> bool:
+        """Update model status in JSON configuration file."""
+        try:
+            json_models = self.load_models_from_json()
+            updated = False
+
+            for model in json_models:
+                if model.get("name") == model_name:
+                    if model.get("status") != new_status:
+                        model["status"] = new_status
+                        updated = True
+                        logger.info(f"Updated {model_name} status in JSON to {new_status}")
+                    break
+
+            if updated:
+                # Load existing config to preserve settings
+                with open(self.models_file_path, encoding="utf-8") as f:
+                    existing_config = json.load(f)
+
+                existing_config["models"] = json_models
+                existing_config["metadata"]["last_updated"] = datetime.now(UTC).isoformat()
+
+                with open(self.models_file_path, "w", encoding="utf-8") as f:
+                    json.dump(existing_config, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"Saved updated models configuration to {self.models_file_path}")
+
+            return updated
+
+        except Exception as e:
+            logger.error(f"Error updating model status in JSON: {e}")
+            return False
+
+    def probe_single_model(self, model_name: str, timeout: int = 5) -> dict[str, Any]:
+        """
+        Probe a single model and return detailed status information.
+
+        Args:
+            model_name: Name of the model to probe
+            timeout: Probe timeout in seconds
+
+        Returns:
+            Dictionary with probe result
+        """
+        logger.info(f"Probing single model: {model_name}")
+
+        try:
+            result = self.model_probe_service.probe_model(model_name, timeout)
+
+            return {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "model_name": model_name,
+                "probe_result": result.to_dict(),
+                "recommendation": self._get_probe_recommendation(result)
+            }
+
+        except Exception as e:
+            logger.error(f"Error probing model {model_name}: {e}")
+            return {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "model_name": model_name,
+                "error": str(e)
+            }
+
+    def _get_probe_recommendation(self, result: ModelProbeResult) -> str:
+        """Get recommendation based on probe result."""
+        if result.status == "exists_locally":
+            return "Model is already downloaded and available locally"
+        elif result.status == "remote_exists":
+            return "Model exists on Hugging Face and can be downloaded"
+        elif result.status == "not_found":
+            return "Model not found on Hugging Face - check model name"
+        elif result.status == "timeout":
+            return "Model probe timed out - model might be large or network slow"
+        elif result.status == "network_error":
+            return "Network error occurred - check internet connection"
+        else:
+            return "Unknown probe result"

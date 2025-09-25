@@ -11,6 +11,7 @@ from typing import Any
 import click
 
 from ..services.integration_service import IntegrationService
+from ..services.model_sync import ModelSyncService
 from ..utils import Config, CustomizeLogger
 
 gen_config = Config().get_config()
@@ -1017,6 +1018,156 @@ def _format_statistics_output(stats):
 
     if stats.get("total_models_tracked", 0) > 0:
         click.echo(f"\nTotal Models Tracked: {stats['total_models_tracked']}")
+
+
+@cli.group()
+def probe():
+    """Model probing commands."""
+    pass
+
+
+@probe.command("model")
+@click.argument("model_name")
+@click.option("--timeout", "-t", type=int, default=5, help="Probe timeout in seconds")
+@click.option("--json", "output_json", is_flag=True, help="Output in JSON format")
+@click.pass_context
+def probe_model(ctx, model_name, timeout, output_json):
+    """Probe a single model to check its download status."""
+    integration_service = ctx.obj["integration_service"]
+
+    try:
+        # Initialize model sync service with config from integration service
+        config = integration_service.service_container.config
+        model_sync_service = ModelSyncService(
+            integration_service.service_container.db_manager,
+            config.models_file,
+            config.download_directory
+        )
+
+        # Probe the model
+        result = model_sync_service.probe_single_model(model_name, timeout)
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            _format_probe_model_output(result)
+
+    except Exception as e:
+        click.echo(f"Error probing model: {e}", err=True)
+        ctx.exit(1)
+
+
+@probe.command("pending")
+@click.option("--timeout", "-t", type=int, default=5, help="Probe timeout per model in seconds")
+@click.option("--json", "output_json", is_flag=True, help="Output in JSON format")
+@click.option("--update", is_flag=True, help="Update model status based on probe results")
+@click.pass_context
+def probe_pending(ctx, timeout, output_json, update):
+    """Probe all pending models to check their actual download status."""
+    integration_service = ctx.obj["integration_service"]
+
+    try:
+        # Initialize model sync service with config from integration service
+        config = integration_service.service_container.config
+        model_sync_service = ModelSyncService(
+            integration_service.service_container.db_manager,
+            config.models_file,
+            config.download_directory
+        )
+
+        if update:
+            # Probe and update status
+            result = model_sync_service.probe_and_sync_pending_models(timeout)
+        else:
+            # Just probe without updating
+            from ..services.model_probe import ModelProbeService
+            probe_service = ModelProbeService(config.download_directory)
+
+            # Get pending models
+            pending_models = integration_service.service_container.db_manager.get_models_by_status("pending")
+            model_names = [model.name for model in pending_models]
+
+            if not model_names:
+                click.echo("No pending models found")
+                return
+
+            # Probe models
+            probe_results = probe_service.probe_models_batch(model_names, timeout)
+            summary = probe_service.get_status_summary(probe_results)
+
+            result = {
+                "timestamp": model_sync_service.db_manager.get_system_config("last_probe_time", ""),
+                "total_models": len(pending_models),
+                "probed_models": len(probe_results),
+                "probe_summary": summary,
+                "results": {name: result.to_dict() for name, result in probe_results.items()}
+            }
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            _format_probe_pending_output(result)
+
+    except Exception as e:
+        click.echo(f"Error probing pending models: {e}", err=True)
+        ctx.exit(1)
+
+
+def _format_probe_model_output(result):
+    """Format probe model output for display."""
+    click.echo(f"Model: {result['model_name']}")
+    click.echo("=" * 50)
+
+    if "error" in result:
+        click.echo(f"Error: {result['error']}")
+        return
+
+    probe_result = result["probe_result"]
+    click.echo(f"Status: {probe_result['status']}")
+    click.echo(f"Message: {probe_result['message']}")
+
+    if probe_result.get("details"):
+        details = probe_result["details"]
+        click.echo("\nDetails:")
+        for key, value in details.items():
+            if isinstance(value, (int, float)):
+                click.echo(f"  {key}: {value}")
+            else:
+                click.echo(f"  {key}: {str(value)[:100]}")  # Limit long strings
+
+    click.echo(f"\nRecommendation: {result['recommendation']}")
+
+
+def _format_probe_pending_output(result):
+    """Format probe pending output for display."""
+    click.echo("Pending Models Probe Results")
+    click.echo("=" * 50)
+    click.echo(f"Total pending models: {result['total_models']}")
+    click.echo(f"Probed models: {result['probed_models']}")
+
+    if "status_updates" in result:
+        click.echo(f"Status updates: {result['status_updates']}")
+
+    if "probe_summary" in result:
+        summary = result["probe_summary"]
+        click.echo("\nProbe Summary:")
+        for status, count in summary.items():
+            if isinstance(count, int) and count > 0:
+                click.echo(f"  {status}: {count}")
+
+    if result.get("updated_models"):
+        click.echo("\nUpdated Models:")
+        for model in result["updated_models"]:
+            click.echo(f"  {model['name']}: {model['old_status']} → {model['new_status']}")
+
+    if "results" in result:
+        click.echo("\nDetailed Results:")
+        for model_name, probe_result in result["results"].items():
+            status = probe_result["status"]
+            message = probe_result["message"]
+            click.echo(f"  {model_name}: {status}")
+            if status in ["exists_locally", "not_found"]:
+                click.echo(f"    {message}")
 
 
 if __name__ == "__main__":

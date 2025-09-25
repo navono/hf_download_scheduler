@@ -14,8 +14,8 @@ from pathlib import Path
 from ..core.config import ConfigManager
 from ..models.database import DatabaseManager
 from ..services.downloader import DownloaderService
-from ..services.scheduler import SchedulerService
 from ..services.integration_service import IntegrationService
+from ..services.scheduler import SchedulerService
 from ..utils import Config, CustomizeLogger
 
 # Use the same logger instance as the main module

@@ -40,6 +40,9 @@ class ConfigurationService:
             ),
             "log_level": ("Logging level", config.log_level),
             "max_retries": ("Maximum download retries", str(config.max_retries)),
+            "retry_failed_models": ("Enable retry of failed models", str(config.retry_failed_models)),
+            "max_failed_retries": ("Maximum retry attempts for failed models", str(config.max_failed_retries)),
+            "retry_reset_hours": ("Hours after which retry count is reset", str(config.retry_reset_hours)),
             "timeout_seconds": (
                 "Download timeout in seconds",
                 str(config.timeout_seconds),
@@ -144,8 +147,10 @@ class ConfigurationService:
             "log_max_size",
             "log_backup_count",
             "chunk_size",
+            "max_failed_retries",
+            "retry_reset_hours",
         ]
-        bool_keys = ["foreground", "time_window_enabled"]
+        bool_keys = ["foreground", "time_window_enabled", "retry_failed_models"]
 
         if key in int_keys:
             return int(value)
