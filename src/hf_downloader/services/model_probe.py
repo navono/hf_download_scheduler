@@ -6,27 +6,26 @@ checking if models are already downloaded locally or available remotely.
 """
 
 import os
-import time
-from pathlib import Path
-from typing import Any, Dict
-from urllib.parse import urlparse
-
-from huggingface_hub import HfApi, hf_hub_download
-from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
-from loguru import logger
 import subprocess
 import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+from huggingface_hub import HfApi
+from huggingface_hub.utils import RepositoryNotFoundError
+from loguru import logger
 
 
 class ModelProbeResult:
     """Result of model probe operation."""
 
-    def __init__(self, status: str, message: str = "", details: Dict[str, Any] = None):
+    def __init__(self, status: str, message: str = "", details: dict[str, Any] = None):
         self.status = status  # "exists_locally", "remote_exists", "not_found", "network_error", "timeout"
         self.message = message
         self.details = details or {}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "status": self.status,
@@ -99,14 +98,14 @@ class ModelProbeService:
                 if download_test_result:
                     if download_test_result.status == "not_found":
                         logger.info(f"Model {model_name} path exists but download test indicates incomplete")
-                        return ModelProbeResult("not_found", f"Model path exists but appears incomplete", {
+                        return ModelProbeResult("not_found", "Model path exists but appears incomplete", {
                             "local_path": local_result.details.get("local_path"),
                             "issue": "incomplete_download",
                             "download_test_result": download_test_result.details
                         })
                     elif download_test_result.status == "timeout":
                         logger.info(f"Model {model_name} path exists but download test timed out - likely incomplete")
-                        return ModelProbeResult("not_found", f"Model path exists but download test timed out", {
+                        return ModelProbeResult("not_found", "Model path exists but download test timed out", {
                             "local_path": local_result.details.get("local_path"),
                             "issue": "download_test_timeout",
                             "download_test_result": download_test_result.details
@@ -161,7 +160,7 @@ class ModelProbeService:
                     break
 
             if not model_path:
-                logger.debug(f"Local model path does not exist in any expected location")
+                logger.debug("Local model path does not exist in any expected location")
                 logger.debug(f"Checked paths: {[str(p) for p in possible_paths]}")
                 return ModelProbeResult("not_found", "Model not found locally")
 
@@ -352,13 +351,13 @@ class ModelProbeService:
                                 })
                         else:
                             logger.warning(f"Config.json not found after test download for {model_name}")
-                            return ModelProbeResult("not_found", f"Model test file not found", {
+                            return ModelProbeResult("not_found", "Model test file not found", {
                                 "test_method": "download_test",
                                 "issue": "test_file_missing"
                             })
                     else:
                         logger.warning(f"Download test failed for {model_name}: {result.stderr}")
-                        return ModelProbeResult("not_found", f"Model download test failed", {
+                        return ModelProbeResult("not_found", "Model download test failed", {
                             "test_method": "download_test",
                             "error": result.stderr.strip()
                         })
@@ -377,7 +376,7 @@ class ModelProbeService:
             logger.error(f"Error during download test for {model_name}: {e}")
             return None  # Indicate fallback needed
 
-    def probe_models_batch(self, model_names: list[str], timeout: int = None) -> Dict[str, ModelProbeResult]:
+    def probe_models_batch(self, model_names: list[str], timeout: int = None) -> dict[str, ModelProbeResult]:
         """
         Probe multiple models in batch.
 
@@ -423,7 +422,7 @@ class ModelProbeService:
         logger.info(f"Batch probe complete: {status_counts}")
         return results
 
-    def get_status_summary(self, results: Dict[str, ModelProbeResult]) -> Dict[str, Any]:
+    def get_status_summary(self, results: dict[str, ModelProbeResult]) -> dict[str, Any]:
         """Get summary statistics from probe results."""
         summary = {
             "total_models": len(results),

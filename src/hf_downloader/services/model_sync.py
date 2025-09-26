@@ -12,7 +12,7 @@ from typing import Any
 from loguru import logger
 
 from ..models.database import DatabaseManager
-from .model_probe import ModelProbeService, ModelProbeResult
+from .model_probe import ModelProbeResult, ModelProbeService
 
 
 class ModelSyncService:
