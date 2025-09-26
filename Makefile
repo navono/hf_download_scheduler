@@ -43,6 +43,7 @@ status:
 
 update:
 	uv run hf-downloader probe pending --update
+
 test:
 	uv run pytest -v
 

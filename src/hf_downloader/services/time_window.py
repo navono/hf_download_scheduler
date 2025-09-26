@@ -8,6 +8,11 @@ including support for midnight crossing and timezone handling.
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
 from loguru import logger
 
 
@@ -18,12 +23,17 @@ class TimeWindow:
     start_time: str  # HH:MM format
     end_time: str  # HH:MM format
     enabled: bool = False
+    timezone: str = "local"
+    weekend_enabled: bool = False
+    weekend_days: list[str] = None
 
     def __post_init__(self):
         """Validate time format after initialization."""
         if self.enabled:
             self._validate_time_format(self.start_time)
             self._validate_time_format(self.end_time)
+        if self.weekend_days is None:
+            self.weekend_days = []
 
     def _validate_time_format(self, time_str: str):
         """Validate time format is HH:MM."""
@@ -54,16 +64,32 @@ class TimeWindow:
         hours, minutes = time_str.split(":")
         return int(hours) * 60 + int(minutes)
 
+    def _get_current_datetime(self) -> datetime:
+        """Get current datetime with timezone support."""
+        if self.timezone == "local":
+            return datetime.now()
+        elif self.timezone == "UTC+8":
+            utc_now = datetime.now(ZoneInfo("UTC"))
+            china_tz = ZoneInfo("Asia/Shanghai")
+            return utc_now.astimezone(china_tz)
+        else:
+            # Default to local time
+            return datetime.now()
+
     def _get_current_time_minutes(self) -> int:
         """Get current time as minutes since midnight."""
-        now = datetime.now()
+        now = self._get_current_datetime()
         return now.hour * 60 + now.minute
 
-    def _crosses_midnight(self) -> bool:
-        """Check if the time window crosses midnight."""
-        start_minutes = self._time_to_minutes(self.start_time)
-        end_minutes = self._time_to_minutes(self.end_time)
-        return end_minutes < start_minutes
+    def _is_weekend_day(self) -> bool:
+        """Check if current day is a weekend day."""
+        if not self.weekend_enabled:
+            return False
+
+        now = self._get_current_datetime()
+        current_weekday = now.strftime("%A").lower()
+
+        return current_weekday in [day.lower() for day in self.weekend_days]
 
     def is_current_time_in_window(self) -> bool:
         """
@@ -72,6 +98,11 @@ class TimeWindow:
         Returns:
             bool: True if current time is within the window, False otherwise
         """
+        # If weekend is enabled and today is a weekend day, allow downloads
+        if self.weekend_enabled and self._is_weekend_day():
+            logger.debug("Weekend download enabled - allowing download")
+            return True
+
         if not self.enabled:
             return True  # No time restriction
 
@@ -91,10 +122,17 @@ class TimeWindow:
         logger.debug(
             f"Time window check: current={current_minutes // 60:02d}:{current_minutes % 60:02d}, "
             f"window={self.start_time}-{self.end_time}, crosses_midnight={self._crosses_midnight()}, "
+            f"weekend_enabled={self.weekend_enabled}, is_weekend={self._is_weekend_day()}, "
             f"result={result}"
         )
 
         return result
+
+    def _crosses_midnight(self) -> bool:
+        """Check if the time window crosses midnight."""
+        start_minutes = self._time_to_minutes(self.start_time)
+        end_minutes = self._time_to_minutes(self.end_time)
+        return end_minutes < start_minutes
 
     def get_next_window_start(self) -> datetime:
         """
@@ -104,9 +142,9 @@ class TimeWindow:
             datetime: Next window start time
         """
         if not self.enabled:
-            return datetime.now()
+            return self._get_current_datetime()
 
-        now = datetime.now()
+        now = self._get_current_datetime()
         current_time = now.time()
         start_time = self._parse_time(self.start_time)
         end_time = self._parse_time(self.end_time)
@@ -150,7 +188,7 @@ class TimeWindow:
         if not self.enabled:
             return None
 
-        now = datetime.now()
+        now = self._get_current_datetime()
         current_time = now.time()
         start_time = self._parse_time(self.start_time)
         end_time = self._parse_time(self.end_time)
@@ -208,6 +246,10 @@ class TimeWindow:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "enabled": self.enabled,
+            "timezone": self.timezone,
+            "weekend_enabled": self.weekend_enabled,
+            "weekend_days": self.weekend_days,
+            "is_weekend_today": self._is_weekend_day(),
             "crosses_midnight": self._crosses_midnight(),
             "duration_minutes": self.get_window_duration_minutes(),
             "is_currently_active": self.is_current_time_in_window(),
@@ -256,7 +298,9 @@ class TimeWindowController:
         self.logger = logger.bind(component="TimeWindowController")
 
     def create_time_window(
-        self, start_time: str, end_time: str, enabled: bool = True
+        self, start_time: str, end_time: str, enabled: bool = True,
+        timezone: str = "local", weekend_enabled: bool = False,
+        weekend_days: list[str] = None
     ) -> TimeWindow:
         """
         Create a new TimeWindow instance with validation.
@@ -265,6 +309,9 @@ class TimeWindowController:
             start_time: Start time in HH:MM format
             end_time: End time in HH:MM format
             enabled: Whether the time window is enabled
+            timezone: Timezone for time window ("local" or "UTC+8")
+            weekend_enabled: Whether weekend downloads are enabled
+            weekend_days: List of weekend days (e.g., ["saturday", "sunday"])
 
         Returns:
             TimeWindow: Created time window instance
@@ -273,7 +320,12 @@ class TimeWindowController:
             ValueError: If time format is invalid or window is invalid
         """
         time_window = TimeWindow(
-            start_time=start_time, end_time=end_time, enabled=enabled
+            start_time=start_time,
+            end_time=end_time,
+            enabled=enabled,
+            timezone=timezone,
+            weekend_enabled=weekend_enabled,
+            weekend_days=weekend_days or []
         )
 
         is_valid, errors = time_window.validate()
@@ -283,7 +335,8 @@ class TimeWindowController:
             raise ValueError(f"Invalid time window: {error_msg}")
 
         self.logger.info(
-            f"Created time window: {start_time}-{end_time} (enabled={enabled})"
+            f"Created time window: {start_time}-{end_time} (enabled={enabled}, "
+            f"timezone={timezone}, weekend_enabled={weekend_enabled})"
         )
         return time_window
 

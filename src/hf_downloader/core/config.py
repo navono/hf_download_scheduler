@@ -218,10 +218,26 @@ class Config:
 
         # Validate timezone
         timezone = time_window.get("timezone", "local")
-        if timezone != "local":
+        valid_timezones = ["local", "UTC+8"]
+        if timezone not in valid_timezones:
             errors.append(
-                f"Unsupported timezone: {timezone}. Only 'local' is supported"
+                f"Unsupported timezone: {timezone}. Supported timezones: {', '.join(valid_timezones)}"
             )
+
+        # Validate weekend configuration
+        weekend_enabled = time_window.get("weekend_enabled", False)
+        if not isinstance(weekend_enabled, bool):
+            errors.append("time_window.weekend_enabled must be a boolean")
+
+        weekend_days = time_window.get("weekend_days", [])
+        if weekend_enabled and not isinstance(weekend_days, list):
+            errors.append("time_window.weekend_days must be a list when weekend_enabled is true")
+
+        if isinstance(weekend_days, list):
+            valid_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            for day in weekend_days:
+                if not isinstance(day, str) or day.lower() not in valid_days:
+                    errors.append(f"Invalid weekend day: {day}. Valid days: {', '.join(valid_days)}")
 
         return errors
 

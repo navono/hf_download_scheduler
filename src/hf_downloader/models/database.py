@@ -6,7 +6,6 @@ for managing models, schedules, downloads, and configuration.
 """
 
 import json
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -103,6 +102,9 @@ class ScheduleConfiguration(Base):
     time_window_enabled = Column(Boolean, default=False)
     time_window_start = Column(String(5), nullable=True)  # HH:MM format
     time_window_end = Column(String(5), nullable=True)  # HH:MM format
+    time_window_timezone = Column(String(50), nullable=True, default="local")  # Timezone for time window
+    weekend_enabled = Column(Boolean, default=False)  # Enable weekend downloads
+    weekend_days = Column(Text, nullable=True)  # JSON array of weekend days
 
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(
@@ -130,6 +132,9 @@ class ScheduleConfiguration(Base):
             "time_window_enabled": self.time_window_enabled,
             "time_window_start": self.time_window_start,
             "time_window_end": self.time_window_end,
+            "time_window_timezone": self.time_window_timezone,
+            "weekend_enabled": self.weekend_enabled,
+            "weekend_days": json.loads(self.weekend_days) if self.weekend_days else [],
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -265,7 +270,7 @@ class DatabaseManager:
         self.SessionLocal = sessionmaker(
             autocommit=False, autoflush=False, bind=self.engine
         )
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger.bind(component="DatabaseManager")
         self._create_tables()
         logger.info("DatabaseManager initialized successfully")
 

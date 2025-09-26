@@ -55,10 +55,14 @@ monitoring:
 default_schedule:
   enabled: true
   type: daily
-  time: "7:42"
+  time: "22:00"
   max_concurrent_downloads: 1
   time_window:
     enabled: false
     start_time: "22:00"
     end_time: "07:00"
-    timezone: "local"
+    timezone: "UTC+8"
+    weekend_enabled: true
+    weekend_days:
+      - "saturday"
+      - "sunday"

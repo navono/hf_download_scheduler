@@ -90,6 +90,22 @@ class ConfigurationService:
                 if config.default_schedule
                 else "local",
             ),
+            "weekend_enabled": (
+                "Weekend downloads enabled",
+                str(
+                    config.default_schedule.get("time_window", {}).get("weekend_enabled", False)
+                    if config.default_schedule
+                    else False
+                ),
+            ),
+            "weekend_days": (
+                "Weekend days",
+                json.dumps(
+                    config.default_schedule.get("time_window", {}).get("weekend_days", [])
+                    if config.default_schedule
+                    else []
+                ),
+            ),
         }
 
         for key, (description, value) in config_mappings.items():
@@ -150,12 +166,17 @@ class ConfigurationService:
             "max_failed_retries",
             "retry_reset_hours",
         ]
-        bool_keys = ["foreground", "time_window_enabled", "retry_failed_models"]
+        bool_keys = ["foreground", "time_window_enabled", "retry_failed_models", "weekend_enabled"]
 
         if key in int_keys:
             return int(value)
         elif key in bool_keys:
             return value.lower() in ["true", "1", "yes", "on"]
+        elif key == "weekend_days":
+            try:
+                return json.loads(value) if value else []
+            except json.JSONDecodeError:
+                return []
         else:
             return value
 

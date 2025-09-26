@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Database migration script to add time window fields to schedule_configurations table.
+Database migration script to add weekend and timezone fields to schedule_configurations table.
 
-This migration adds support for time-based download scheduling restrictions.
+This migration adds support for weekend downloads and UTC+8 timezone functionality.
 """
 
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
-
 
 def backup_database(db_path: str, backup_path: str):
     """Create a backup of the database before migration."""
@@ -22,7 +21,6 @@ def backup_database(db_path: str, backup_path: str):
         logger.error(f"Failed to backup database: {e}")
         return False
 
-
 def check_column_exists(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
     """Check if a column exists in a table."""
     cursor = conn.cursor()
@@ -30,81 +28,43 @@ def check_column_exists(conn: sqlite3.Connection, table_name: str, column_name: 
     columns = [row[1] for row in cursor.fetchall()]
     return column_name in columns
 
-
-def add_time_window_fields(conn: sqlite3.Connection):
-    """Add time window fields to schedule_configurations table."""
+def add_weekend_timezone_fields(conn: sqlite3.Connection):
+    """Add weekend and timezone fields to schedule_configurations table."""
 
     # Check if columns already exist
-    if check_column_exists(conn, 'schedule_configurations', 'time_window_enabled'):
-        logger.info("Time window fields already exist - skipping migration")
+    if check_column_exists(conn, 'schedule_configurations', 'time_window_timezone'):
+        logger.info("Weekend and timezone fields already exist - skipping migration")
         return True
 
     try:
         cursor = conn.cursor()
 
-        # Add time window fields
-        logger.info("Adding time_window_enabled column...")
+        # Add timezone field
+        logger.info("Adding time_window_timezone column...")
         cursor.execute("""
             ALTER TABLE schedule_configurations
-            ADD COLUMN time_window_enabled BOOLEAN DEFAULT FALSE
+            ADD COLUMN time_window_timezone VARCHAR(50) DEFAULT 'local'
         """)
 
-        logger.info("Adding time_window_start column...")
+        # Add weekend enabled field
+        logger.info("Adding weekend_enabled column...")
         cursor.execute("""
             ALTER TABLE schedule_configurations
-            ADD COLUMN time_window_start VARCHAR(5)
+            ADD COLUMN weekend_enabled BOOLEAN DEFAULT FALSE
         """)
 
-        logger.info("Adding time_window_end column...")
+        # Add weekend days field (JSON array)
+        logger.info("Adding weekend_days column...")
         cursor.execute("""
             ALTER TABLE schedule_configurations
-            ADD COLUMN time_window_end VARCHAR(5)
+            ADD COLUMN weekend_days TEXT
         """)
 
-        # Add check constraint for time format (HH:MM)
-        logger.info("Adding time format validation constraints...")
-        cursor.execute("""
-            CREATE TRIGGER validate_time_window_start
-            BEFORE INSERT OR UPDATE ON schedule_configurations
-            FOR EACH ROW
-            BEGIN
-                WHEN NEW.time_window_start IS NOT NULL AND
-                     NEW.time_window_start NOT GLOB '[0-2][0-9]:[0-5][0-9]'
-                BEGIN
-                    SELECT RAISE(ABORT, 'Invalid time_window_start format. Use HH:MM format (00:00-23:59)')
-                END;
-            END;
-        """)
-
-        cursor.execute("""
-            CREATE TRIGGER validate_time_window_end
-            BEFORE INSERT OR UPDATE ON schedule_configurations
-            FOR EACH ROW
-            BEGIN
-                WHEN NEW.time_window_end IS NOT NULL AND
-                     NEW.time_window_end NOT GLOB '[0-2][0-9]:[0-5][0-9]'
-                BEGIN
-                    SELECT RAISE(ABORT, 'Invalid time_window_end format. Use HH:MM format (00:00-23:59)')
-                END;
-            END;
-        """)
-
-        # Add constraint to ensure both time fields are set when enabled
-        cursor.execute("""
-            CREATE TRIGGER validate_time_window_consistency
-            BEFORE INSERT OR UPDATE ON schedule_configurations
-            FOR EACH ROW
-            BEGIN
-                WHEN NEW.time_window_enabled = TRUE AND
-                     (NEW.time_window_start IS NULL OR NEW.time_window_end IS NULL)
-                BEGIN
-                    SELECT RAISE(ABORT, 'Both time_window_start and time_window_end must be specified when time_window_enabled is TRUE')
-                END;
-            END;
-        """)
+        # Note: Validation is handled at the application level in config.py
+        # SQLite doesn't support complex triggers well, so we'll rely on app-level validation
 
         conn.commit()
-        logger.info("Time window fields added successfully")
+        logger.info("Weekend and timezone fields added successfully")
         return True
 
     except sqlite3.Error as e:
@@ -116,7 +76,6 @@ def add_time_window_fields(conn: sqlite3.Connection):
         conn.rollback()
         return False
 
-
 def verify_migration(conn: sqlite3.Connection):
     """Verify that the migration was successful."""
 
@@ -125,9 +84,9 @@ def verify_migration(conn: sqlite3.Connection):
 
         # Check if columns exist
         columns_exist = all([
-            check_column_exists(conn, 'schedule_configurations', 'time_window_enabled'),
-            check_column_exists(conn, 'schedule_configurations', 'time_window_start'),
-            check_column_exists(conn, 'schedule_configurations', 'time_window_end')
+            check_column_exists(conn, 'schedule_configurations', 'time_window_timezone'),
+            check_column_exists(conn, 'schedule_configurations', 'weekend_enabled'),
+            check_column_exists(conn, 'schedule_configurations', 'weekend_days')
         ])
 
         if not columns_exist:
@@ -138,28 +97,40 @@ def verify_migration(conn: sqlite3.Connection):
         cursor.execute("""
             SELECT COUNT(*)
             FROM schedule_configurations
-            WHERE time_window_enabled IS NULL
+            WHERE time_window_timezone IS NULL
         """)
-        null_enabled_count = cursor.fetchone()[0]
+        null_timezone_count = cursor.fetchone()[0]
 
-        if null_enabled_count > 0:
-            logger.warning(f"Found {null_enabled_count} records with NULL time_window_enabled")
-            # Fix NULL values
+        if null_timezone_count > 0:
+            logger.info(f"Found {null_timezone_count} records with NULL time_window_timezone, setting defaults...")
             cursor.execute("""
                 UPDATE schedule_configurations
-                SET time_window_enabled = FALSE
-                WHERE time_window_enabled IS NULL
+                SET time_window_timezone = 'local'
+                WHERE time_window_timezone IS NULL
             """)
-            conn.commit()
-            logger.info("Fixed NULL time_window_enabled values")
 
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM schedule_configurations
+            WHERE weekend_enabled IS NULL
+        """)
+        null_weekend_count = cursor.fetchone()[0]
+
+        if null_weekend_count > 0:
+            logger.info(f"Found {null_weekend_count} records with NULL weekend_enabled, setting defaults...")
+            cursor.execute("""
+                UPDATE schedule_configurations
+                SET weekend_enabled = FALSE
+                WHERE weekend_enabled IS NULL
+            """)
+
+        conn.commit()
         logger.info("Migration verification completed successfully")
         return True
 
     except Exception as e:
         logger.error(f"Error during migration verification: {e}")
         return False
-
 
 def main():
     """Main migration function."""
@@ -185,7 +156,7 @@ def main():
         conn.execute("PRAGMA foreign_keys = ON")
 
         # Run migration
-        if not add_time_window_fields(conn):
+        if not add_weekend_timezone_fields(conn):
             logger.error("Migration failed")
             return 1
 
@@ -202,7 +173,6 @@ def main():
     except Exception as e:
         logger.error(f"Migration failed with error: {e}")
         return 1
-
 
 if __name__ == "__main__":
     exit(main())

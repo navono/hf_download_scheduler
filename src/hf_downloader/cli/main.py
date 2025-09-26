@@ -5,7 +5,6 @@ This module provides the command-line interface for the HF Downloader applicatio
 """
 
 import json
-import logging
 from typing import Any
 
 import click
@@ -58,8 +57,7 @@ def cli(ctx, config, database, pid, log_level, output_format):
     """HF Downloader - Scheduled Hugging Face model downloader."""
     ctx.ensure_object(dict)
 
-    # Set up logging
-    logging.basicConfig(level=getattr(logging, log_level.upper()))
+    # Note: Logging is configured globally using loguru through CustomizeLogger
 
     # Initialize context
     ctx.obj["config_path"] = config
@@ -100,33 +98,30 @@ def start(ctx, foreground):
                 status_filter="pending"
             )
             if models["status"] == "success" and models["models"]:
-                click.echo(
-                    "\nPending models that will be downloaded on next scheduled run:"
+                logger.info(
+                    "Pending models that will be downloaded on next scheduled run:"
                 )
                 _format_models_output(models["models"])
 
         success = daemon.start()
         if not success:
-            click.echo("Failed to start daemon", err=True)
+            logger.error("Failed to start daemon")
             ctx.exit(1)
     else:
         # Start daemon in background
         result = integration_service.safe_daemon_start(foreground=False)
 
         if result["status"] == "started":
-            click.echo(f"Daemon started successfully with PID {result['pid']}")
+            logger.info(f"Daemon started successfully with PID {result['pid']}")
         elif result["status"] == "already_running":
-            click.echo(f"Daemon is already running (PID {result['pid']})")
+            logger.info(f"Daemon is already running (PID {result['pid']})")
         else:
             error_msg = result.get("error", "Unknown error")
             stderr = result.get("stderr", "")
             if stderr:
-                click.echo(
-                    f"Failed to start daemon: {error_msg}\nError details:\n{stderr}",
-                    err=True,
-                )
+                logger.error(f"Failed to start daemon: {error_msg}\nError details:\n{stderr}")
             else:
-                click.echo(f"Failed to start daemon: {error_msg}", err=True)
+                logger.error(f"Failed to start daemon: {error_msg}")
             ctx.exit(1)
 
 
@@ -139,13 +134,11 @@ def stop(ctx):
     result = integration_service.safe_daemon_stop()
 
     if result["status"] == "stopped":
-        click.echo(f"Daemon stopped successfully (PID {result['pid']})")
+        logger.info(f"Daemon stopped successfully (PID {result['pid']})")
     elif result["status"] == "not_running":
-        click.echo("Daemon is not running")
+        logger.info("Daemon is not running")
     else:
-        click.echo(
-            f"Failed to stop daemon: {result.get('error', 'Unknown error')}", err=True
-        )
+        logger.error(f"Failed to stop daemon: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -159,7 +152,7 @@ def status(ctx, detailed):
     result = integration_service.cli_integration.handle_daemon_status(detailed=detailed)
 
     if ctx.obj["output_format"] == "json":
-        click.echo(json.dumps(result, indent=2))
+        logger.info(json.dumps(result, indent=2))
     else:
         _format_status_output(result, detailed)
 
@@ -177,12 +170,12 @@ def restart(ctx):
         start_result = result["start_result"]
 
         if stop_result["status"] == "stopped":
-            click.echo("Previous daemon stopped successfully")
+            logger.info("Previous daemon stopped successfully")
         elif stop_result["status"] == "not_running":
-            click.echo("No previous daemon was running")
+            logger.info("No previous daemon was running")
 
         if start_result["status"] == "started":
-            click.echo(
+            logger.info(
                 f"New daemon started successfully with PID {start_result['pid']}"
             )
         else:
@@ -222,11 +215,11 @@ def list_models(ctx, status):
 
     if result["status"] == "success":
         if ctx.obj["output_format"] == "json":
-            click.echo(json.dumps(result["models"], indent=2))
+            logger.info(json.dumps(result["models"], indent=2))
         else:
             _format_models_output(result["models"])
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -241,15 +234,15 @@ def add_model(ctx, model_name, _models):
     result = integration_service.cli_integration.handle_model_add(model_name)
 
     if result["status"] == "created":
-        click.echo(
+        logger.info(
             f"Model {model_name} added successfully with ID {result['model']['id']}"
         )
     elif result["status"] == "exists":
-        click.echo(
+        logger.info(
             f"Model {model_name} already exists with status {result['model']['status']}"
         )
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -259,7 +252,7 @@ def add_model(ctx, model_name, _models):
 def remove_model(_ctx, model_name):
     """Remove a model from the download queue."""
     # This would require a delete method in DatabaseManager
-    click.echo(f"Model {model_name} removal not yet implemented")
+    logger.warning(f"Model {model_name} removal not yet implemented")
 
 
 @models.command("sync")
@@ -271,16 +264,16 @@ def sync_models(ctx):
     result = integration_service.sync_models()
 
     if result["success"]:
-        click.echo("Model synchronization completed successfully")
-        click.echo(
+        logger.info("Model synchronization completed successfully")
+        logger.info(
             f"JSON to DB: {result['json_to_db']['added']} added, {result['json_to_db']['skipped']} skipped"
         )
-        click.echo(
+        logger.info(
             f"DB to JSON: {result['db_to_json']['updated']} updated, {result['db_to_json']['unchanged']} unchanged"
         )
 
         if result["remaining_differences"] > 0:
-            click.echo(
+            logger.warning(
                 f"Warning: {result['remaining_differences']} models still have differences"
             )
     else:
@@ -299,17 +292,17 @@ def sync_status(ctx):
     models_needing_sync = integration_service.get_models_needing_sync()
 
     if ctx.obj["output_format"] == "json":
-        click.echo(json.dumps(models_needing_sync, indent=2))
+        logger.info(json.dumps(models_needing_sync, indent=2))
     else:
         if not models_needing_sync:
-            click.echo("All models are synchronized")
+            logger.info("All models are synchronized")
             return
 
-        click.echo("Models needing synchronization:")
-        click.echo(
+        logger.info("Models needing synchronization:")
+        logger.info(
             f"{'Name':<40} {'JSON Status':<12} {'DB Status':<12} {'Priority':<10}"
         )
-        click.echo("-" * 80)
+        logger.info("-" * 80)
 
         for model in models_needing_sync:
             name = model.get("name", "N/A")
@@ -317,7 +310,7 @@ def sync_status(ctx):
             db_status = model.get("db_status", "N/A")
             priority = model.get("priority", "medium")
 
-            click.echo(f"{name:<40} {json_status:<12} {db_status:<12} {priority:<10}")
+            logger.info(f"{name:<40} {json_status:<12} {db_status:<12} {priority:<10}")
 
 
 @models.command("update-status")
@@ -331,9 +324,9 @@ def update_model_status(ctx, model_name, status):
     result = integration_service.update_model_status_in_json(model_name, status)
 
     if result:
-        click.echo(f"Updated {model_name} status to {status} in JSON file")
+        logger.info(f"Updated {model_name} status to {status} in JSON file")
     else:
-        click.echo(f"Failed to update {model_name} status", err=True)
+        logger.error(f"Failed to update {model_name} status")
         ctx.exit(1)
 
 
@@ -354,11 +347,11 @@ def list_schedules(ctx):
 
     if result["status"] == "success":
         if ctx.obj["output_format"] == "json":
-            click.echo(json.dumps(result["schedules"], indent=2))
+            logger.info(json.dumps(result["schedules"], indent=2))
         else:
             _format_schedules_output(result["schedules"])
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -391,11 +384,11 @@ def create_schedule(ctx, name, schedule_type, time_str, day_of_week, max_concurr
     )
 
     if result["status"] == "created":
-        click.echo(
+        logger.info(
             f"Schedule '{name}' created successfully with ID {result['schedule']['id']}"
         )
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -408,7 +401,7 @@ def enable_schedule(ctx, schedule_id):
 
     result = integration_service.cli_integration.handle_schedule_enable(schedule_id)
     if result["status"] == "enabled":
-        click.echo(f"Schedule {schedule_id} enabled successfully")
+        logger.info(f"Schedule {schedule_id} enabled successfully")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -426,7 +419,7 @@ def disable_schedule(ctx, schedule_id):
 
     result = integration_service.cli_integration.handle_schedule_disable(schedule_id)
     if result["status"] == "disabled":
-        click.echo(f"Schedule {schedule_id} disabled successfully")
+        logger.info(f"Schedule {schedule_id} disabled successfully")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -475,7 +468,7 @@ def update_schedule(
         schedule_id, **kwargs
     )
     if result["status"] == "updated":
-        click.echo(f"Schedule {schedule_id} updated successfully")
+        logger.info(f"Schedule {schedule_id} updated successfully")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -497,11 +490,11 @@ def time_window_schedule(ctx, schedule_id, enable, disable, start_time, end_time
 
     # Validate options
     if enable and disable:
-        click.echo("Error: Cannot specify both --enable and --disable", err=True)
+        logger.error("Error: Cannot specify both --enable and --disable")
         ctx.exit(1)
 
     if not enable and not disable:
-        click.echo("Error: Must specify either --enable or --disable", err=True)
+        logger.error("Error: Must specify either --enable or --disable")
         ctx.exit(1)
 
     if enable and (not start_time or not end_time):
@@ -523,10 +516,10 @@ def time_window_schedule(ctx, schedule_id, enable, disable, start_time, end_time
     )
     if result["status"] == "updated":
         if enable:
-            click.echo(f"Time window enabled for schedule {schedule_id}")
-            click.echo(f"Window: {start_time} - {end_time}")
+            logger.info(f"Time window enabled for schedule {schedule_id}")
+            logger.info(f"Window: {start_time} - {end_time}")
         else:
-            click.echo(f"Time window disabled for schedule {schedule_id}")
+            logger.info(f"Time window disabled for schedule {schedule_id}")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -545,23 +538,23 @@ def time_window_status(ctx, schedule_id):
     result = integration_service.cli_integration.handle_time_window_status(schedule_id)
     if result["status"] == "success":
         schedule = result["schedule"]
-        click.echo(f"Time Window Status for Schedule {schedule_id}:")
-        click.echo(f"  Enabled: {'Yes' if schedule.time_window_enabled else 'No'}")
+        logger.info(f"Time Window Status for Schedule {schedule_id}:")
+        logger.info(f"  Enabled: {'Yes' if schedule.time_window_enabled else 'No'}")
 
         if schedule.time_window_enabled:
-            click.echo(f"  Start Time: {schedule.time_window_start}")
-            click.echo(f"  End Time: {schedule.time_window_end}")
-            click.echo(
+            logger.info(f"  Start Time: {schedule.time_window_start}")
+            logger.info(f"  End Time: {schedule.time_window_end}")
+            logger.info(
                 f"  Currently Active: {'Yes' if result['is_currently_active'] else 'No'}"
             )
-            click.echo(
+            logger.info(
                 f"  Can Start Downloads: {'Yes' if result['can_start_downloads'] else 'No'}"
             )
 
             if result.get("next_window_start"):
-                click.echo(f"  Next Window Start: {result['next_window_start']}")
+                logger.info(f"  Next Window Start: {result['next_window_start']}")
             if result.get("current_window_end"):
-                click.echo(f"  Current Window End: {result['current_window_end']}")
+                logger.info(f"  Current Window End: {result['current_window_end']}")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -579,7 +572,7 @@ def delete_schedule(ctx, schedule_id):
 
     result = integration_service.cli_integration.handle_schedule_delete(schedule_id)
     if result["status"] == "deleted":
-        click.echo(f"Schedule {schedule_id} deleted successfully")
+        logger.info(f"Schedule {schedule_id} deleted successfully")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -596,11 +589,11 @@ def backup_schedules(ctx):
 
     result = integration_service.cli_integration.handle_schedule_backup()
     if result["status"] == "success":
-        click.echo("Schedule backup created successfully")
-        click.echo(f"Backup timestamp: {result['timestamp']}")
-        click.echo(f"Schedules backed up: {result['backup_count']}")
+        logger.info("Schedule backup created successfully")
+        logger.info(f"Backup timestamp: {result['timestamp']}")
+        logger.info(f"Schedules backed up: {result['backup_count']}")
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -612,11 +605,11 @@ def restore_schedules(ctx):
 
     result = integration_service.cli_integration.handle_schedule_restore()
     if result["status"] == "success":
-        click.echo("Schedule restore completed successfully")
-        click.echo(f"Backup timestamp: {result['backup_timestamp']}")
-        click.echo(f"Schedules restored: {result['restored_count']}")
+        logger.info("Schedule restore completed successfully")
+        logger.info(f"Backup timestamp: {result['backup_timestamp']}")
+        logger.info(f"Schedules restored: {result['restored_count']}")
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -629,8 +622,8 @@ def download(ctx):
     result = integration_service.safe_manual_download()
 
     if result["status"] == "triggered":
-        click.echo("Manual download triggered successfully")
-        click.echo(f"Schedule: {result['schedule']['name']}")
+        logger.info("Manual download triggered successfully")
+        logger.info(f"Schedule: {result['schedule']['name']}")
     else:
         click.echo(
             f"Failed to trigger manual download: {result.get('error', 'Unknown error')}",
@@ -663,7 +656,7 @@ def list_sessions(ctx, model, status):
 
     if result["status"] == "success":
         if ctx.obj["output_format"] == "json":
-            click.echo(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
             _format_sessions_output(
                 result["sessions"],
@@ -671,7 +664,7 @@ def list_sessions(ctx, model, status):
                 result.get("filter_status"),
             )
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -686,11 +679,11 @@ def session_details(ctx, session_id):
 
     if result["status"] == "success":
         if ctx.obj["output_format"] == "json":
-            click.echo(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
             _format_session_details_output(result)
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -704,8 +697,8 @@ def cancel_session(ctx, session_id):
     result = integration_service.cli_integration.handle_session_cancel(session_id)
 
     if result["status"] == "cancelled":
-        click.echo(f"Session {session_id} cancelled successfully")
-        click.echo(f"Model: {result['model']}")
+        logger.info(f"Session {session_id} cancelled successfully")
+        logger.info(f"Model: {result['model']}")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -727,11 +720,11 @@ def retry_session(ctx, session_id, schedule_id):
     )
 
     if result["status"] == "retry_created":
-        click.echo("Retry session created successfully")
-        click.echo(f"Original session: {result['original_session_id']}")
-        click.echo(f"New session: {result['new_session_id']}")
-        click.echo(f"Model: {result['model']}")
-        click.echo(f"Retry count: {result['retry_count']}")
+        logger.info("Retry session created successfully")
+        logger.info(f"Original session: {result['original_session_id']}")
+        logger.info(f"New session: {result['new_session_id']}")
+        logger.info(f"Model: {result['model']}")
+        logger.info(f"Retry count: {result['retry_count']}")
     else:
         click.echo(
             f"Error: {result.get('message', result.get('error', 'Unknown error'))}",
@@ -752,11 +745,11 @@ def cleanup_sessions(ctx, days):
     result = integration_service.cli_integration.handle_session_cleanup(days)
 
     if result["status"] == "success":
-        click.echo("Session cleanup completed successfully")
-        click.echo(f"Deleted {result['deleted_count']} old sessions")
-        click.echo(f"Kept sessions from last {days} days")
+        logger.info("Session cleanup completed successfully")
+        logger.info(f"Deleted {result['deleted_count']} old sessions")
+        logger.info(f"Kept sessions from last {days} days")
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -775,11 +768,11 @@ def download_stats(ctx, model, schedule_id, days):
 
     if result.get("status") == "success":
         if ctx.obj["output_format"] == "json":
-            click.echo(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
             _format_statistics_output(result)
     else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        logger.error(f"Error: {result.get('error', 'Unknown error')}")
         ctx.exit(1)
 
 
@@ -790,28 +783,28 @@ def _format_status_output(result: dict[str, Any], detailed: bool):
     if status == "running":
         pid = result.get("pid", "unknown")
         uptime = result.get("uptime", "unknown")
-        click.echo(f"Daemon is running (PID: {pid})")
-        click.echo(f"Uptime: {uptime}")
+        logger.info(f"Daemon is running (PID: {pid})")
+        logger.info(f"Uptime: {uptime}")
 
         if detailed:
             memory = result.get("memory_usage")
             if memory:
-                click.echo(f"Memory: {memory.get('rss_formatted', 'N/A')}")
-                click.echo(f"CPU: {result.get('cpu_usage', 0):.1f}%")
+                logger.info(f"Memory: {memory.get('rss_formatted', 'N/A')}")
+                logger.info(f"CPU: {result.get('cpu_usage', 0):.1f}%")
     elif status == "stopped":
-        click.echo("Daemon is not running")
+        logger.info("Daemon is not running")
     else:
-        click.echo(f"Status: {status}")
+        logger.info(f"Status: {status}")
 
 
 def _format_models_output(models):
     """Format models output for table display."""
     if not models:
-        click.echo("No models found")
+        logger.info("No models found")
         return
 
-    click.echo(f"{'ID':<5} {'Name':<40} {'Status':<12} {'Size':<10} {'Created':<20}")
-    click.echo("-" * 90)
+    logger.info(f"{'ID':<5} {'Name':<40} {'Status':<12} {'Size':<10} {'Created':<20}")
+    logger.info("-" * 90)
 
     for model in models:
         # Handle both model objects and dictionaries
@@ -840,7 +833,7 @@ def _format_models_output(models):
         else:
             created_str = "N/A"
 
-        click.echo(
+        logger.info(
             f"{model_id:<5} {model_name:<40} {model_status:<12} {size_str:<10} {created_str:<20}"
         )
 
@@ -848,13 +841,13 @@ def _format_models_output(models):
 def _format_schedules_output(schedules):
     """Format schedules output for table display."""
     if not schedules:
-        click.echo("No schedules found")
+        logger.info("No schedules found")
         return
 
-    click.echo(
+    logger.info(
         f"{'ID':<5} {'Name':<20} {'Type':<8} {'Time':<8} {'Day':<5} {'Enabled':<8} {'Concurrent':<10} {'Time Window':<15}"
     )
-    click.echo("-" * 85)
+    logger.info("-" * 85)
 
     for schedule in schedules:
         day_str = (
@@ -874,7 +867,7 @@ def _format_schedules_output(schedules):
         else:
             tw_str = "Disabled"
 
-        click.echo(
+        logger.info(
             f"{schedule.id:<5} {schedule.name:<20} {schedule.type:<8} {schedule.time:<8} {day_str:<5} {enabled_str:<8} {schedule.max_concurrent_downloads:<10} {tw_str:<15}"
         )
 
@@ -882,7 +875,7 @@ def _format_schedules_output(schedules):
 def _format_sessions_output(sessions, filter_model=None, filter_status=None):
     """Format sessions output for table display."""
     if not sessions:
-        click.echo("No sessions found")
+        logger.info("No sessions found")
         return
 
     # Show filter information
@@ -892,13 +885,13 @@ def _format_sessions_output(sessions, filter_model=None, filter_status=None):
             filter_info.append(f"Model: {filter_model}")
         if filter_status:
             filter_info.append(f"Status: {filter_status}")
-        click.echo(f"Filtered by: {', '.join(filter_info)}")
-        click.echo()
+        logger.info(f"Filtered by: {', '.join(filter_info)}")
+        logger.info("")
 
-    click.echo(
+    logger.info(
         f"{'ID':<5} {'Model ID':<8} {'Status':<12} {'Progress':<10} {'Downloaded':<12} {'Total':<10} {'Started':<20}"
     )
-    click.echo("-" * 85)
+    logger.info("-" * 85)
 
     for session in sessions:
         # Handle both session objects and dictionaries
@@ -937,7 +930,7 @@ def _format_sessions_output(sessions, filter_model=None, filter_status=None):
         else:
             started_str = "N/A"
 
-        click.echo(
+        logger.info(
             f"{session_id:<5} {model_id:<8} {status:<12} {progress:<9.1f}% {downloaded_str:<12} {total_str:<10} {started_str:<20}"
         )
 
@@ -951,73 +944,73 @@ def _format_session_details_output(result):
     speed_bps = result["download_speed_bps"]
     speed_mbps = result["download_speed_mbps"]
 
-    click.echo("Session Details")
-    click.echo("=" * 50)
-    click.echo(f"Session ID: {session['id']}")
-    click.echo(f"Model: {model['name']} (ID: {session['model_id']})")
-    click.echo(f"Status: {session['status']}")
-    click.echo(f"Progress: {progress:.1f}%")
-    click.echo(f"Downloaded: {session['bytes_downloaded'] / 1024 / 1024:.1f}MB")
-    click.echo(
+    logger.info("Session Details")
+    logger.info("=" * 50)
+    logger.info(f"Session ID: {session['id']}")
+    logger.info(f"Model: {model['name']} (ID: {session['model_id']})")
+    logger.info(f"Status: {session['status']}")
+    logger.info(f"Progress: {progress:.1f}%")
+    logger.info(f"Downloaded: {session['bytes_downloaded'] / 1024 / 1024:.1f}MB")
+    logger.info(
         f"Total Size: {session['total_bytes'] / 1024 / 1024:.1f}MB"
         if session["total_bytes"]
         else "Total Size: N/A"
     )
 
     if duration:
-        click.echo(f"Duration: {duration:.1f} seconds")
+        logger.info(f"Duration: {duration:.1f} seconds")
     if speed_bps > 0:
-        click.echo(f"Download Speed: {speed_mbps:.2f} Mbps")
+        logger.info(f"Download Speed: {speed_mbps:.2f} Mbps")
 
-    click.echo(f"Retry Count: {session['retry_count']}")
-    click.echo(
+    logger.info(f"Retry Count: {session['retry_count']}")
+    logger.info(
         f"Started: {session['started_at'][:19] if session['started_at'] else 'N/A'}"
     )
-    click.echo(
+    logger.info(
         f"Completed: {session['completed_at'][:19] if session['completed_at'] else 'N/A'}"
     )
 
     if session.get("error_message"):
-        click.echo(f"Error: {session['error_message']}")
+        logger.info(f"Error: {session['error_message']}")
 
     if session.get("schedule_id"):
-        click.echo(f"Schedule ID: {session['schedule_id']}")
+        logger.info(f"Schedule ID: {session['schedule_id']}")
 
 
 def _format_statistics_output(stats):
     """Format statistics output for table display."""
-    click.echo("Download Statistics")
-    click.echo("=" * 50)
+    logger.info("Download Statistics")
+    logger.info("=" * 50)
 
-    click.echo("Sessions Summary:")
-    click.echo(f"  Total Sessions: {stats['total_sessions']}")
-    click.echo(f"  Completed: {stats['completed_sessions']}")
-    click.echo(f"  Failed: {stats['failed_sessions']}")
-    click.echo(f"  Cancelled: {stats['cancelled_sessions']}")
-    click.echo(f"  Currently Active: {stats['active_sessions']}")
-    click.echo(f"  Success Rate: {stats['success_rate']}%")
+    logger.info("Sessions Summary:")
+    logger.info(f"  Total Sessions: {stats['total_sessions']}")
+    logger.info(f"  Completed: {stats['completed_sessions']}")
+    logger.info(f"  Failed: {stats['failed_sessions']}")
+    logger.info(f"  Cancelled: {stats['cancelled_sessions']}")
+    logger.info(f"  Currently Active: {stats['active_sessions']}")
+    logger.info(f"  Success Rate: {stats['success_rate']}%")
 
-    click.echo("\nData Transfer:")
-    click.echo(
+    logger.info("\nData Transfer:")
+    logger.info(
         f"  Total Downloaded: {stats['total_bytes_downloaded'] / 1024 / 1024 / 1024:.2f} GB"
     )
-    click.echo(
+    logger.info(
         f"  Total Requested: {stats['total_bytes_requested'] / 1024 / 1024 / 1024:.2f} GB"
     )
-    click.echo(f"  Completion Rate: {stats['completion_rate']}%")
+    logger.info(f"  Completion Rate: {stats['completion_rate']}%")
 
     if stats["average_download_speed_bps"] > 0:
-        click.echo(f"  Average Speed: {stats['average_download_speed_mbps']:.2f} Mbps")
+        logger.info(f"  Average Speed: {stats['average_download_speed_mbps']:.2f} Mbps")
 
     if stats.get("current_active_downloads", 0) > 0:
-        click.echo(
+        logger.info(
             f"\nCurrently Downloading: {stats['current_active_downloads']} models"
         )
         for model in stats.get("current_downloading_models", []):
-            click.echo(f"  - {model}")
+            logger.info(f"  - {model}")
 
     if stats.get("total_models_tracked", 0) > 0:
-        click.echo(f"\nTotal Models Tracked: {stats['total_models_tracked']}")
+        logger.info(f"\nTotal Models Tracked: {stats['total_models_tracked']}")
 
 
 @cli.group()
@@ -1041,26 +1034,30 @@ def probe_model(ctx, model_name, timeout, output_json):
         model_sync_service = ModelSyncService(
             integration_service.service_container.db_manager,
             config.models_file,
-            config.download_directory
+            config.download_directory,
         )
 
         # Probe the model
         result = model_sync_service.probe_single_model(model_name, timeout)
 
         if output_json:
-            click.echo(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
             _format_probe_model_output(result)
 
     except Exception as e:
-        click.echo(f"Error probing model: {e}", err=True)
+        logger.error(f"Error probing model: {e}")
         ctx.exit(1)
 
 
 @probe.command("pending")
-@click.option("--timeout", "-t", type=int, default=5, help="Probe timeout per model in seconds")
+@click.option(
+    "--timeout", "-t", type=int, default=5, help="Probe timeout per model in seconds"
+)
 @click.option("--json", "output_json", is_flag=True, help="Output in JSON format")
-@click.option("--update", is_flag=True, help="Update model status based on probe results")
+@click.option(
+    "--update", is_flag=True, help="Update model status based on probe results"
+)
 @click.pass_context
 def probe_pending(ctx, timeout, output_json, update):
     """Probe all pending models to check their actual download status."""
@@ -1072,7 +1069,7 @@ def probe_pending(ctx, timeout, output_json, update):
         model_sync_service = ModelSyncService(
             integration_service.service_container.db_manager,
             config.models_file,
-            config.download_directory
+            config.download_directory,
         )
 
         if update:
@@ -1081,14 +1078,19 @@ def probe_pending(ctx, timeout, output_json, update):
         else:
             # Just probe without updating
             from ..services.model_probe import ModelProbeService
+
             probe_service = ModelProbeService(config.download_directory)
 
             # Get pending models
-            pending_models = integration_service.service_container.db_manager.get_models_by_status("pending")
+            pending_models = (
+                integration_service.service_container.db_manager.get_models_by_status(
+                    "pending"
+                )
+            )
             model_names = [model.name for model in pending_models]
 
             if not model_names:
-                click.echo("No pending models found")
+                logger.info("No pending models found")
                 return
 
             # Probe models
@@ -1096,78 +1098,84 @@ def probe_pending(ctx, timeout, output_json, update):
             summary = probe_service.get_status_summary(probe_results)
 
             result = {
-                "timestamp": model_sync_service.db_manager.get_system_config("last_probe_time", ""),
+                "timestamp": model_sync_service.db_manager.get_system_config(
+                    "last_probe_time", ""
+                ),
                 "total_models": len(pending_models),
                 "probed_models": len(probe_results),
                 "probe_summary": summary,
-                "results": {name: result.to_dict() for name, result in probe_results.items()}
+                "results": {
+                    name: result.to_dict() for name, result in probe_results.items()
+                },
             }
 
         if output_json:
-            click.echo(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
         else:
             _format_probe_pending_output(result)
 
     except Exception as e:
-        click.echo(f"Error probing pending models: {e}", err=True)
+        logger.error(f"Error probing pending models: {e}")
         ctx.exit(1)
 
 
 def _format_probe_model_output(result):
     """Format probe model output for display."""
-    click.echo(f"Model: {result['model_name']}")
-    click.echo("=" * 50)
+    logger.info(f"Model: {result['model_name']}")
+    logger.info("=" * 50)
 
     if "error" in result:
-        click.echo(f"Error: {result['error']}")
+        logger.info(f"Error: {result['error']}")
         return
 
     probe_result = result["probe_result"]
-    click.echo(f"Status: {probe_result['status']}")
-    click.echo(f"Message: {probe_result['message']}")
+    logger.info(f"Status: {probe_result['status']}")
+    logger.info(f"Message: {probe_result['message']}")
 
     if probe_result.get("details"):
         details = probe_result["details"]
-        click.echo("\nDetails:")
+        logger.info("\nDetails:")
         for key, value in details.items():
             if isinstance(value, (int, float)):
-                click.echo(f"  {key}: {value}")
+                logger.info(f"  {key}: {value}")
             else:
-                click.echo(f"  {key}: {str(value)[:100]}")  # Limit long strings
+                logger.info(f"  {key}: {str(value)[:100]}")  # Limit long strings
 
-    click.echo(f"\nRecommendation: {result['recommendation']}")
+    logger.info(f"\nRecommendation: {result['recommendation']}")
 
 
 def _format_probe_pending_output(result):
     """Format probe pending output for display."""
-    click.echo("Pending Models Probe Results")
-    click.echo("=" * 50)
-    click.echo(f"Total pending models: {result['total_models']}")
-    click.echo(f"Probed models: {result['probed_models']}")
+    logger.info("Pending Models Probe Results")
+    logger.info("=" * 50)
+    logger.info(f"Total pending models: {result['total_models']}")
+    logger.info(f"Probed models: {result['probed_models']}")
 
     if "status_updates" in result:
-        click.echo(f"Status updates: {result['status_updates']}")
+        logger.info(f"Status updates: {result['status_updates']}")
 
     if "probe_summary" in result:
         summary = result["probe_summary"]
-        click.echo("\nProbe Summary:")
+        logger.info("\nProbe Summary:")
         for status, count in summary.items():
             if isinstance(count, int) and count > 0:
-                click.echo(f"  {status}: {count}")
+                logger.info(f"  {status}: {count}")
 
     if result.get("updated_models"):
-        click.echo("\nUpdated Models:")
+        logger.info("\nUpdated Models:")
         for model in result["updated_models"]:
-            click.echo(f"  {model['name']}: {model['old_status']} → {model['new_status']}")
+            logger.info(
+                f"  {model['name']}: {model['old_status']} → {model['new_status']}"
+            )
 
     if "results" in result:
-        click.echo("\nDetailed Results:")
+        logger.info("\nDetailed Results:")
         for model_name, probe_result in result["results"].items():
             status = probe_result["status"]
             message = probe_result["message"]
-            click.echo(f"  {model_name}: {status}")
+            logger.info(f"  {model_name}: {status}")
             if status in ["exists_locally", "not_found"]:
-                click.echo(f"    {message}")
+                logger.info(f"    {message}")
 
 
 if __name__ == "__main__":
